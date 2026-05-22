@@ -1,0 +1,203 @@
+/* =============================================================================
+   Marrow Symphony — Design Tokens
+   =============================================================================
+   Monochrome shell + per-Project accents + one warm "Needs Input" glow.
+   See README.md (§ VISUAL FOUNDATIONS) for the system this implements.
+   ========================================================================== */
+
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
+
+:root {
+  /* ─── Neutral ramp ──────────────────────────────────────────────────────── */
+  --neutral-0:  #ffffff;
+  --neutral-50: #fafafa;
+  --neutral-100:#f4f4f5;
+  --neutral-200:#e4e4e7;
+  --neutral-300:#a1a1aa;
+  --neutral-400:#71717a;
+  --neutral-500:#52525b;
+  --neutral-600:#3f3f46;
+  --neutral-700:#27272a;
+  --neutral-800:#18181b;
+  --neutral-850:#111113;
+  --neutral-900:#0e0e10;
+  --neutral-950:#0a0a0a;
+
+  /* ─── Shell semantic ─────────────────────────────────────────────────────── */
+  --bg-shell:           #0a0a0a;         /* under the shader */
+  --bg-working:         #0e0e10;         /* terminals, columns */
+  --bg-working-elev:    #131316;         /* lifted card on working surface */
+  --bg-glass:           rgb(20 20 22 / 0.55);
+  --bg-glass-strong:    rgb(20 20 22 / 0.75);
+  --bg-glass-hover:     rgb(34 34 38 / 0.62);
+
+  --fg1: #fafafa;                        /* primary text on dark */
+  --fg2: #d4d4d8;                        /* secondary text */
+  --fg3: #a1a1aa;                        /* tertiary / metadata */
+  --fg4: #71717a;                        /* disabled / placeholder */
+  --fg-on-light: #0a0a0a;
+
+  --hairline: rgb(255 255 255 / 0.06);   /* the only border in the system */
+  --hairline-strong: rgb(255 255 255 / 0.12);
+  --inset-highlight: rgb(255 255 255 / 0.04); /* inset top edge on glass */
+
+  /* ─── Per-Project accents (saturated shader palette — neon-meets-deep) ──── */
+  --project-1: #5318c9;  /* Electric Purple — webapp  */
+  --project-2: #79fa87;  /* Neon Mint       — api     */
+  --project-3: #d946ef;  /* Hot Magenta     — infra   */
+  --project-4: #671b4d;  /* Oxblood         — docs    */
+  --project-5: #ffb300;  /* Solar           — ml      */
+  --project-6: #00d9ff;  /* Neon Cyan       — tooling */
+
+  /* ─── Semantic status (chromatic — palette mirrors Project hues) ────────── */
+  --status-running:            #79fa87;  /* Neon Mint — alive */
+  --status-running-glow:       rgb(121 250 135 / 0.55);
+  --status-running-bg:         rgb(121 250 135 / 0.10);
+
+  --status-needs-input:        #00d9ff;  /* Neon Cyan — the alert color */
+  --status-needs-input-glow:   rgb(0 217 255 / 0.60);
+  --status-needs-input-bg:     rgb(0 217 255 / 0.12);
+
+  --status-idle:               #5318c9;  /* Electric Purple — alive but quiet */
+  --status-idle-stroke:        #8b5cf6;  /* lighter purple for hollow dot stroke */
+  --status-idle-glow:          rgb(83 24 201 / 0.55);
+  --status-idle-bg:            rgb(83 24 201 / 0.12);
+
+  --status-exited:             #ef4444;  /* Red — runner ended */
+  --status-exited-glow:        rgb(239 68 68 / 0.45);
+  --status-exited-bg:          rgb(239 68 68 / 0.10);
+
+  /* ─── Type ──────────────────────────────────────────────────────────────── */
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --fs-12: 12px; --lh-12: 16px;
+  --fs-13: 13px; --lh-13: 18px;          /* dense UI base */
+  --fs-14: 14px; --lh-14: 20px;          /* shell base */
+  --fs-16: 16px; --lh-16: 22px;
+  --fs-18: 18px; --lh-18: 24px;
+  --fs-22: 22px; --lh-22: 28px;
+  --fs-28: 28px; --lh-28: 34px;
+  --fs-36: 36px; --lh-36: 42px;
+  --fs-48: 48px; --lh-48: 52px;
+
+  --tracking-display: -0.02em;
+  --tracking-tight:   -0.01em;
+  --tracking-body:     0;
+  --tracking-caps:     0.02em;
+
+  /* ─── Spacing (4px base) ────────────────────────────────────────────────── */
+  --s-2:  2px;
+  --s-4:  4px;
+  --s-6:  6px;
+  --s-8:  8px;
+  --s-12: 12px;
+  --s-16: 16px;
+  --s-20: 20px;
+  --s-24: 24px;
+  --s-32: 32px;
+  --s-40: 40px;
+  --s-56: 56px;
+
+  /* ─── Radii ─────────────────────────────────────────────────────────────── */
+  --r-4:  4px;
+  --r-8:  8px;                           /* buttons, badges, pills */
+  --r-12: 12px;                          /* terminal frames in working layer */
+  --r-16: 16px;
+  --r-20: 20px;                          /* glass cards, dialogs */
+  --r-full: 9999px;
+
+  /* ─── Shadows ───────────────────────────────────────────────────────────── */
+  --shadow-glass:
+    0 8px 32px -4px rgb(0 0 0 / 0.35),
+    0 1px 0 0 var(--inset-highlight) inset;
+  --shadow-glass-lifted:
+    0 12px 48px -8px rgb(0 0 0 / 0.5),
+    0 1px 0 0 var(--inset-highlight) inset;
+  --shadow-working:
+    0 1px 2px 0 rgb(0 0 0 / 0.45);
+  --shadow-needs-input:
+    0 0 0 1px var(--status-needs-input),
+    0 0 24px -4px var(--status-needs-input-glow);
+  --shadow-focus:
+    0 0 0 2px rgb(250 250 250 / 0.4);
+
+  /* ─── Motion ────────────────────────────────────────────────────────────── */
+  --ease-out-expo: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-toggle:   cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-hover:     120ms;
+  --dur-toggle:    220ms;
+  --dur-page:      320ms;
+
+  /* ─── Blur ──────────────────────────────────────────────────────────────── */
+  --blur-glass: blur(24px) saturate(140%);
+  --blur-glass-reduced: blur(8px) saturate(120%);
+
+  /* ─── Layout rails ──────────────────────────────────────────────────────── */
+  --sidebar-w: 240px;
+  --topbar-h:  44px;
+}
+
+/* =============================================================================
+   Semantic type styles — apply directly on elements
+   ========================================================================== */
+
+.t-display {
+  font: 600 var(--fs-48)/var(--lh-48) var(--font-sans);
+  letter-spacing: var(--tracking-display);
+  color: var(--fg1);
+}
+.t-h1 {
+  font: 600 var(--fs-36)/var(--lh-36) var(--font-sans);
+  letter-spacing: var(--tracking-display);
+  color: var(--fg1);
+}
+.t-h2 {
+  font: 600 var(--fs-28)/var(--lh-28) var(--font-sans);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fg1);
+}
+.t-h3 {
+  font: 600 var(--fs-22)/var(--lh-22) var(--font-sans);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fg1);
+}
+.t-h4 {
+  font: 600 var(--fs-18)/var(--lh-18) var(--font-sans);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fg1);
+}
+.t-body {
+  font: 400 var(--fs-14)/var(--lh-14) var(--font-sans);
+  color: var(--fg2);
+}
+.t-ui {
+  font: 500 var(--fs-13)/var(--lh-13) var(--font-sans);
+  color: var(--fg2);
+}
+.t-meta {
+  font: 400 var(--fs-12)/var(--lh-12) var(--font-sans);
+  color: var(--fg3);
+}
+.t-caps {
+  font: 500 var(--fs-12)/var(--lh-12) var(--font-sans);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--fg3);
+}
+.t-code {
+  font: 400 var(--fs-13)/var(--lh-13) var(--font-mono);
+  color: var(--fg2);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-feature-settings: "ss01" on;
+}
+.t-num {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --blur-glass: var(--blur-glass-reduced);
+    --bg-glass: rgb(20 20 22 / 0.85);
+  }
+}

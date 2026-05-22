@@ -15,6 +15,9 @@ to write. Link new docs from this index with a one-line description and a status
 - [visual-language.md](./visual-language.md) — the aesthetic direction (Terax-inspired: B&W +
   cursor-reactive shaders, glass cards, rounded/borderless, monochrome shell + per-Project accents).
   _draft_
+- [reference-design.md](./reference-design.md) — catalogue of the clickable Claude Design reference in
+  [`marrow_symphony_reference_design/`](../../marrow_symphony_reference_design): screens, variants,
+  tokens, and known divergences. _reference, not implemented_
 
 ## Integrations
 

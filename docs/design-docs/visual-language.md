@@ -15,6 +15,11 @@ Take cues from **[terax.app](https://terax.app/)**: a black-and-white site using
 borders** — separation comes from blur, shadow, and spacing, not lines. Built on **shadcn/ui** +
 Tailwind (the stack already chosen for Marrow).
 
+A clickable Claude Design realization of this direction now exists — catalogued in
+[`reference-design.md`](./reference-design.md). Its `colors_and_type.css` is the canonical token set
+(Project colors **follow `--project-*`**); the **alert color is still being chosen** between Neon Cyan,
+an animated rainbow, and warm amber via 3 sample pages — see that doc's "Decisions & cleanup".
+
 ## Principles
 
 1. **Monochrome shell, chromatic Projects.** The chrome is black / white / greys. The **only** vivid

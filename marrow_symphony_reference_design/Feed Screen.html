@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Marrow Symphony — Feed</title>
+  <link rel="stylesheet" href="styles/colors_and_type.css"/>
+  <style>
+    html, body, #root { margin:0; padding:0; height:100%; width:100%; background:#050505; }
+    body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; color: var(--fg1); }
+    *, *::before, *::after { box-sizing: border-box; }
+    button { font-family: inherit; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    /* ── Feed: animated needs-input dot (rainbow shimmer + soft halo) ── */
+    .fd-attn-dot {
+      position: relative;
+      display: inline-block;
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #da8c6b, #d930b1, #8844d8, #4e52f4, #87f3ff, #da8c6b);
+      background-size: 220% 220%;
+      animation: fd-attn-shift 3.4s linear infinite;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 0 8px rgba(217,48,177,0.6);
+      flex: none;
+    }
+    .fd-attn-dot::after {
+      content: ""; position: absolute; inset: -4px; border-radius: 50%;
+      background: linear-gradient(135deg, #da8c6b, #d930b1, #8844d8, #4e52f4, #87f3ff);
+      background-size: 220% 220%;
+      animation: fd-attn-shift 3.4s linear infinite, fd-attn-pulse 1.6s ease-in-out infinite;
+      filter: blur(4px); opacity: 0.55; z-index: -1; pointer-events: none;
+    }
+    @keyframes fd-attn-shift { 0% { background-position: 0% 50% } 100% { background-position: 220% 50% } }
+    @keyframes fd-attn-pulse { 0%,100% { opacity: 0.55; transform: scale(1) } 50% { opacity: 0.85; transform: scale(1.2) } }
+
+    /* ── Feed: terminal caret ── */
+    .fd-caret {
+      display: inline-block;
+      width: 8px; height: 16px;
+      vertical-align: -3px;
+      margin-left: 4px;
+      background: var(--fg1);
+      animation: fd-caret-blink 1.05s steps(2, start) infinite;
+    }
+    @keyframes fd-caret-blink { 0%,49% { opacity: 1 } 50%,100% { opacity: 0 } }
+
+    /* ── Feed: rainbow "Mark done" primary ── */
+    @property --ms-angle { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+    @keyframes fd-rainbow-spin { to { --ms-angle: 360deg; } }
+    @keyframes fd-rainbow-glow {
+      0%,100% { box-shadow:
+        0 0 24px -6px rgba(217,48,177,0.45),
+        0 0 36px -10px rgba(78,82,244,0.35),
+        0 0 48px -16px rgba(135,243,255,0.25); }
+      50%     { box-shadow:
+        0 0 28px -4px rgba(217,48,177,0.65),
+        0 0 44px -8px rgba(78,82,244,0.55),
+        0 0 60px -12px rgba(135,243,255,0.40); }
+    }
+    .fd-rainbow {
+      animation: fd-rainbow-spin 4s linear infinite, fd-rainbow-glow 2.6s ease-in-out infinite;
+      transition: filter 120ms cubic-bezier(0.4,0,0.2,1);
+    }
+    .fd-rainbow:hover  { filter: brightness(1.10); }
+    .fd-rainbow:active { filter: brightness(0.95); }
+
+    /* ── Feed: needs-input pill glow ── */
+    .fd-needs-pill {
+      animation: fd-needs-breathe 2.4s ease-in-out infinite;
+    }
+    @keyframes fd-needs-breathe {
+      0%,100% { filter: brightness(1) drop-shadow(0 0 6px rgba(217,48,177,0.25)); }
+      50%     { filter: brightness(1.06) drop-shadow(0 0 10px rgba(217,48,177,0.45)); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .fd-attn-dot, .fd-attn-dot::after, .fd-rainbow, .fd-needs-pill, .fd-caret {
+        animation: none !important;
+      }
+    }
+  </style>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="src/feed-data.js"></script>
+  <script type="text/babel" src="src/shader.jsx"></script>
+  <script type="text/babel" src="src/feed-parts.jsx"></script>
+  <script type="text/babel" src="src/feed-context.jsx"></script>
+  <script type="text/babel" src="src/feed-screen.jsx"></script>
+  <script type="text/babel" src="src/design-canvas.jsx"></script>
+  <script type="text/babel" src="src/feed-canvas-app.jsx"></script>
+</body>
+</html>

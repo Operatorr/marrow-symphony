@@ -11,6 +11,9 @@
 >
 > Uses the canonical nouns from `CONTEXT.md` exactly: **Group, Project, Issue, Workspace, Session,
 > Runner, State Type**. The terminal is the UI surface that *shows* a Session.
+>
+> A clickable Claude Design pass over these surfaces now exists — catalogued in
+> [`reference-design.md`](./reference-design.md).
 
 ## How each surface is documented
 

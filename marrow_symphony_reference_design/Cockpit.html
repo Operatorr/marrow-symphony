@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Marrow Symphony — Cockpit</title>
+  <link rel="stylesheet" href="styles/colors_and_type.css"/>
+  <style>
+    html, body, #root { margin:0; padding:0; height:100%; width:100%; background:#050505; }
+    body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; color: var(--fg1); }
+    *, *::before, *::after { box-sizing: border-box; }
+    button { font-family: inherit; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    /* Shared chrome */
+    @keyframes shell-pulse {
+      0%, 100% { opacity: 0.55; transform: scale(1); }
+      50%      { opacity: 1;    transform: scale(1.15); }
+    }
+
+    /* Cockpit terminal prompt caret + needs-input rainbow dot */
+    .ck-caret {
+      display: inline-block;
+      width: 7px; height: 14px;
+      vertical-align: -3px;
+      margin-left: 4px;
+      background: var(--fg1);
+      animation: ck-caret-blink 1.05s steps(2, start) infinite;
+    }
+    @keyframes ck-caret-blink { 0%,49% { opacity: 1 } 50%,100% { opacity: 0 } }
+
+    .ch-attn-dot {
+      position: relative;
+      display: inline-block;
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #da8c6b, #d930b1, #8844d8, #4e52f4, #87f3ff, #da8c6b);
+      background-size: 220% 220%;
+      animation: ch-attn-shift 3.4s linear infinite;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 0 8px rgba(217,48,177,0.6);
+      flex: none;
+    }
+    .ch-attn-dot::after {
+      content: ""; position: absolute; inset: -4px; border-radius: 50%;
+      background: linear-gradient(135deg, #da8c6b, #d930b1, #8844d8, #4e52f4, #87f3ff);
+      background-size: 220% 220%;
+      animation: ch-attn-shift 3.4s linear infinite, ch-attn-pulse 1.6s ease-in-out infinite;
+      filter: blur(4px); opacity: 0.55; z-index: -1; pointer-events: none;
+    }
+    @keyframes ch-attn-shift { 0% { background-position: 0% 50% } 100% { background-position: 220% 50% } }
+    @keyframes ch-attn-pulse { 0%,100% { opacity: 0.55; transform: scale(1) } 50% { opacity: 0.85; transform: scale(1.2) } }
+
+    .ch-needs-pill { animation: ch-needs-breathe 2.4s ease-in-out infinite; }
+    @keyframes ch-needs-breathe {
+      0%,100% { filter: brightness(1) drop-shadow(0 0 6px rgba(217,48,177,0.25)); }
+      50%     { filter: brightness(1.06) drop-shadow(0 0 10px rgba(217,48,177,0.45)); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { animation-duration: 0s !important; animation-iteration-count: 1 !important; }
+    }
+  </style>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="src/shell-data.js"></script>
+  <script src="src/views-data.js"></script>
+  <script type="text/babel" src="src/shader.jsx"></script>
+  <script type="text/babel" src="src/chrome.jsx"></script>
+  <script type="text/babel" src="src/cockpit.jsx"></script>
+  <script type="text/babel" src="src/design-canvas.jsx"></script>
+  <script type="text/babel">
+    function CockpitCanvasApp() {
+      return (
+        <DesignCanvas>
+          <DCSection
+            id="cockpit"
+            title="Cockpit"
+            subtitle="The fleet — every live Session as a terminal tile, grouped by Project. Needs-Input tiles glow and sort to the front of their group."
+          >
+            <DCArtboard id="fleet" label="A · All projects · 11 live · 4 need input" width={1440} height={900}>
+              <CockpitView sidebarOpen={true} selected="webapp" scope="all" />
+            </DCArtboard>
+
+            <DCArtboard id="filtered" label="B · Filtered to webapp" width={1440} height={900}>
+              <CockpitView sidebarOpen={true} selected="webapp" scope="webapp" />
+            </DCArtboard>
+          </DCSection>
+        </DesignCanvas>
+      );
+    }
+    ReactDOM.createRoot(document.getElementById('root')).render(<CockpitCanvasApp />);
+  </script>
+</body>
+</html>
