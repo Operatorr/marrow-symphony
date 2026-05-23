@@ -37,3 +37,7 @@ src/            React frontend (components/, lib/, store.ts)
 src-tauri/      Rust backend (src/lib.rs = command surface, tauri.conf.json)
 docs/           architecture, ADRs, design docs, exec plans
 ```
+
+## License
+
+[MIT](./LICENSE) © 2026 Alexander Widing
