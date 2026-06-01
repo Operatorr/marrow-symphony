@@ -1,7 +1,8 @@
 ---
-status: active
+status: done
 slice: tracer-bullet
 created: 2026-05-22
+completed: 2026-06-02
 ---
 
 # 0001 — Scaffold + first vertical slice
@@ -98,3 +99,5 @@ investment, tracked when worktrees land.
 
 ## Progress log
 - 2026-05-22 — Plan created; stack decisions settled via grilling. No steps started yet.
+- 2026-06-02 — Implemented and merged (scaffold, SQLite store, PTY-backed terminal Sessions). DoD met;
+  the full thin spine boots via `pnpm tauri dev`. Slice closed. Next: [`0002`](./0002-full-functional-ui.md).

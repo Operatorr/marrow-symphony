@@ -6,7 +6,9 @@ to write. Link new docs from this index with a one-line description and a status
 ## Beliefs & decisions
 
 - [core-beliefs.md](./core-beliefs.md) — agent-first operating principles for this repo. _stable_
-- [`../adr/`](../adr/) — architecture decision records (`0001`–`0006`). _stable_
+- [`../adr/`](../adr/) — architecture decision records (`0001`–`0010`). _stable_
+  Recent: `0007` Runner registry · `0008` Needs-Input detection · `0009` `marrow` context bus ·
+  `0010` Workspace lifecycle hooks.
 
 ## UI
 
