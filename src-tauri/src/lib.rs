@@ -1,5 +1,11 @@
-// Tauri command surface for Marrow Symphony.
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+mod models;
+mod sessions;
+mod state;
+mod store;
+mod workspace;
+
+use state::AppState;
+use tauri::{Manager, WindowEvent};
 
 /// Tracer-bullet IPC probe: the frontend invokes this to prove the
 /// React → Tauri → Rust round trip works end to end (Step 0 of the
@@ -16,7 +22,42 @@ fn ping() -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![ping])
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let state = tauri::async_runtime::block_on(AppState::new(app.handle()))
+                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+            app.manage(state);
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if matches!(event, WindowEvent::CloseRequested { .. }) {
+                if let Some(state) = window.try_state::<AppState>() {
+                    state.sessions.kill_all();
+                }
+            }
+        })
+        .invoke_handler(tauri::generate_handler![
+            ping,
+            store::create_project,
+            store::list_projects,
+            store::create_issue,
+            store::list_issues,
+            store::list_sessions,
+            sessions::start_session,
+            sessions::write_to_session,
+            sessions::resize_session,
+            sessions::kill_session,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ping;
+
+    #[test]
+    fn ping_smoke_returns_backend_value() {
+        assert!(ping().contains("pong from Rust"));
+    }
 }

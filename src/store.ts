@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ViewMode } from "@/types";
 
 const THEME_KEY = "marrow:dark";
 
@@ -16,7 +17,11 @@ function resolveInitialDark(): boolean {
  */
 interface UiState {
   dark: boolean;
+  selectedProjectId: number | null;
+  view: ViewMode;
   toggleDark: () => void;
+  selectProject: (projectId: number | null) => void;
+  setView: (view: ViewMode) => void;
 }
 
 const initialDark = resolveInitialDark();
@@ -27,6 +32,8 @@ document.documentElement.classList.toggle("dark", initialDark);
 
 export const useUiStore = create<UiState>((set) => ({
   dark: initialDark,
+  selectedProjectId: null,
+  view: "cockpit",
   toggleDark: () =>
     set((state) => {
       const dark = !state.dark;
@@ -34,4 +41,6 @@ export const useUiStore = create<UiState>((set) => ({
       localStorage.setItem(THEME_KEY, String(dark));
       return { dark };
     }),
+  selectProject: (projectId) => set({ selectedProjectId: projectId }),
+  setView: (view) => set({ view }),
 }));
