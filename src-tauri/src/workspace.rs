@@ -10,7 +10,12 @@ pub struct IssueWorkspace {
     pub project_path: String,
     pub issue_title: String,
     pub issue_description: String,
+    pub runner_id: Option<i64>,
     pub runner: String,
+    pub runner_kind: String,
+    pub launch_cmd: String,
+    pub resume_cmd: String,
+    pub env_json: String,
     pub workspace_strategy: String,
 }
 
@@ -27,10 +32,17 @@ pub async fn prepare_workspace(
     let issue = sqlx::query_as::<_, IssueWorkspace>(
         "SELECT i.id AS issue_id, i.project_id, p.name AS project_name, p.path AS project_path,
                 i.title AS issue_title, i.description AS issue_description,
-                COALESCE(i.runner_override, p.default_runner) AS runner,
+                COALESCE(ro.id, rd.id) AS runner_id,
+                COALESCE(ro.name, rd.name, i.runner_override, p.default_runner) AS runner,
+                COALESCE(ro.kind, rd.kind, 'generic') AS runner_kind,
+                COALESCE(ro.launch_cmd, rd.launch_cmd, i.runner_override, p.default_runner) AS launch_cmd,
+                COALESCE(ro.resume_cmd, rd.resume_cmd, '') AS resume_cmd,
+                COALESCE(ro.env_json, rd.env_json, '{}') AS env_json,
                 i.workspace_strategy
          FROM issues i
          JOIN projects p ON p.id = i.project_id
+         LEFT JOIN runners ro ON ro.id = i.runner_override_id
+         LEFT JOIN runners rd ON rd.id = p.default_runner_id
          WHERE i.id = ?1",
     )
     .bind(issue_id)

@@ -1,5 +1,6 @@
 use crate::models::{
-    ResizeSessionInput, SessionInput, SessionSummary, StartSessionInput, WriteSessionInput,
+    ResizeSessionInput, SessionInput, SessionSummary, SetSessionStatusInput, StartSessionInput,
+    WriteSessionInput,
 };
 use crate::state::AppState;
 use crate::store::get_session_summary;
@@ -45,17 +46,69 @@ pub async fn start_session(
     state: State<'_, AppState>,
     input: StartSessionInput,
 ) -> Result<SessionSummary, String> {
+    start_session_impl(app, &state, input).await
+}
+
+pub async fn start_session_impl(
+    app: AppHandle,
+    state: &AppState,
+    input: StartSessionInput,
+) -> Result<SessionSummary, String> {
     let prepared = prepare_workspace(&state.pool, input.issue_id).await?;
     let workspace_path = prepared.workspace_path.to_string_lossy().to_string();
     let issue_file_path = prepared.issue_file_path.to_string_lossy().to_string();
+    let branch = current_branch(&prepared.workspace_path).unwrap_or_default();
+    let resume_token = match input.resume_session_id {
+        Some(session_id) => {
+            let row: (Option<String>,) =
+                sqlx::query_as("SELECT resume_token FROM sessions WHERE id = ?1")
+                    .bind(session_id)
+                    .fetch_one(&state.pool)
+                    .await
+                    .map_err(|err| format!("failed to load resume token: {err}"))?;
+            Some(row.0.ok_or_else(|| "Session has no captured resume token".to_string())?)
+        }
+        None => None,
+    };
+
+    let runner_template = if let Some(token) = &resume_token {
+        if prepared.issue.resume_cmd.trim().is_empty() {
+            return Err(format!(
+                "Runner `{}` does not define a resume command",
+                prepared.issue.runner
+            ));
+        }
+        interpolate_runner_command(
+            &prepared.issue.resume_cmd,
+            &workspace_path,
+            &issue_file_path,
+            &branch,
+            token,
+        )
+    } else {
+        interpolate_runner_command(
+            &prepared.issue.launch_cmd,
+            &workspace_path,
+            &issue_file_path,
+            &branch,
+            "",
+        )
+    };
+    let runner_env = parse_runner_env(&prepared.issue.env_json)?;
 
     let result = sqlx::query(
-        "INSERT INTO sessions (issue_id, project_id, runner, status, workspace_path, issue_file_path)
-         VALUES (?1, ?2, ?3, 'running', ?4, ?5)",
+        "INSERT INTO sessions (
+           issue_id, project_id, runner, runner_id, runner_kind, runner_command, status,
+           workspace_path, issue_file_path
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'running', ?7, ?8)",
     )
     .bind(prepared.issue.issue_id)
     .bind(prepared.issue.project_id)
     .bind(&prepared.issue.runner)
+    .bind(prepared.issue.runner_id)
+    .bind(&prepared.issue.runner_kind)
+    .bind(&runner_template)
     .bind(&workspace_path)
     .bind(&issue_file_path)
     .execute(&state.pool)
@@ -69,6 +122,9 @@ pub async fn start_session(
         state.sessions.clone(),
         session_id,
         &prepared.issue.runner,
+        &prepared.issue.runner_kind,
+        &runner_template,
+        runner_env,
         &prepared.workspace_path,
         &prepared.issue_file_path,
     ) {
@@ -103,12 +159,33 @@ pub async fn start_session(
 
 #[tauri::command]
 pub async fn write_to_session(
+    app: AppHandle,
     state: State<'_, AppState>,
     input: WriteSessionInput,
 ) -> Result<(), String> {
     state
         .sessions
-        .write(input.session_id, input.data.as_bytes())
+        .write(input.session_id, input.data.as_bytes())?;
+    let updated = sqlx::query(
+        "UPDATE sessions
+         SET status = 'running', needs_input_since = NULL, snoozed_until = NULL
+         WHERE id = ?1 AND status = 'needs_input'",
+    )
+    .bind(input.session_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|err| format!("failed to clear Needs Input: {err}"))?;
+    if updated.rows_affected() > 0 {
+        let _ = app.emit(
+            "session-status",
+            SessionStatusEvent {
+                session_id: input.session_id,
+                status: "running".to_string(),
+                exit_code: None,
+            },
+        );
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -124,6 +201,101 @@ pub async fn resize_session(
 #[tauri::command]
 pub async fn kill_session(state: State<'_, AppState>, input: SessionInput) -> Result<(), String> {
     state.sessions.kill(input.session_id)
+}
+
+#[tauri::command]
+pub async fn restart_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    input: SessionInput,
+) -> Result<SessionSummary, String> {
+    let (issue_id,): (i64,) = sqlx::query_as("SELECT issue_id FROM sessions WHERE id = ?1")
+        .bind(input.session_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|err| format!("failed to load Session for restart: {err}"))?;
+    start_session_impl(
+        app,
+        &state,
+        StartSessionInput {
+            issue_id,
+            resume_session_id: None,
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn resume_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    input: SessionInput,
+) -> Result<SessionSummary, String> {
+    let (issue_id,): (i64,) = sqlx::query_as("SELECT issue_id FROM sessions WHERE id = ?1")
+        .bind(input.session_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|err| format!("failed to load Session for resume: {err}"))?;
+    start_session_impl(
+        app,
+        &state,
+        StartSessionInput {
+            issue_id,
+            resume_session_id: Some(input.session_id),
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn set_session_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    input: SetSessionStatusInput,
+) -> Result<SessionSummary, String> {
+    set_session_status_impl(&app, &state.pool, input.session_id, &input.status).await?;
+    get_session_summary(&state, input.session_id).await
+}
+
+#[tauri::command]
+pub async fn snooze_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    input: SessionInput,
+) -> Result<SessionSummary, String> {
+    sqlx::query(
+        "UPDATE sessions
+         SET snoozed_until = datetime('now', '+15 minutes')
+         WHERE id = ?1 AND status = 'needs_input'",
+    )
+    .bind(input.session_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|err| format!("failed to snooze Session: {err}"))?;
+    let summary = get_session_summary(&state, input.session_id).await?;
+    let _ = app.emit(
+        "session-status",
+        SessionStatusEvent {
+            session_id: input.session_id,
+            status: summary.status.clone(),
+            exit_code: summary.exit_code,
+        },
+    );
+    Ok(summary)
+}
+
+#[tauri::command]
+pub async fn get_session_scrollback(
+    state: State<'_, AppState>,
+    input: SessionInput,
+) -> Result<String, String> {
+    let (scrollback,): (String,) =
+        sqlx::query_as("SELECT output_scrollback FROM sessions WHERE id = ?1")
+            .bind(input.session_id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|err| format!("failed to load Session scrollback: {err}"))?;
+    Ok(scrollback)
 }
 
 impl SessionRegistry {
@@ -214,6 +386,9 @@ fn spawn_runner(
     registry: SessionRegistry,
     session_id: i64,
     runner: &str,
+    runner_kind: &str,
+    runner_command: &str,
+    runner_env: HashMap<String, String>,
     workspace_path: &Path,
     issue_file_path: &Path,
 ) -> Result<Option<u32>, String> {
@@ -227,9 +402,14 @@ fn spawn_runner(
         })
         .map_err(|err| format!("failed to open PTY: {err}"))?;
 
-    let mut command = runner_command(runner);
+    let mut command = shell_command(runner_command);
     command.cwd(workspace_path.as_os_str());
+    for (key, value) in runner_env {
+        command.env(key, value);
+    }
     command.env("MARROW_ISSUE_FILE", issue_file_path.as_os_str());
+    command.env("MARROW_SESSION_ID", session_id.to_string());
+    command.env("MARROW_NOTIFY_SOCKET", "");
     command.env("TERM", "xterm-256color");
 
     let mut child = pair
@@ -258,6 +438,7 @@ fn spawn_runner(
 
     let output_app = app.clone();
     let output_pool = pool.clone();
+    let output_runner_kind = runner_kind.to_string();
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
         loop {
@@ -265,16 +446,54 @@ fn spawn_runner(
                 Ok(0) => break,
                 Ok(size) => {
                     let data = String::from_utf8_lossy(&buffer[..size]).to_string();
-                    let _ =
-                        output_app.emit("session-output", SessionOutputEvent { session_id, data });
+                    let _ = output_app.emit(
+                        "session-output",
+                        SessionOutputEvent {
+                            session_id,
+                            data: data.clone(),
+                        },
+                    );
+                    let needs_input = detects_attention_signal(&data);
+                    let resume_token = capture_resume_token(&output_runner_kind, &data);
                     let pool = output_pool.clone();
+                    let status_app = output_app.clone();
                     tauri::async_runtime::spawn(async move {
                         let _ = sqlx::query(
-                            "UPDATE sessions SET last_output_at = datetime('now') WHERE id = ?1",
+                            "UPDATE sessions
+                             SET output_scrollback = substr(COALESCE(output_scrollback, '') || ?1, -?2),
+                                 last_output_at = datetime('now'),
+                                 resume_token = COALESCE(?3, resume_token)
+                             WHERE id = ?4",
                         )
+                        .bind(&data)
+                        .bind(96_000_i64)
+                        .bind(resume_token)
                         .bind(session_id)
                         .execute(&pool)
                         .await;
+
+                        if needs_input {
+                            let updated = sqlx::query(
+                                "UPDATE sessions
+                                 SET status = 'needs_input',
+                                     needs_input_since = COALESCE(needs_input_since, datetime('now')),
+                                     snoozed_until = NULL
+                                 WHERE id = ?1 AND status != 'exited'",
+                            )
+                            .bind(session_id)
+                            .execute(&pool)
+                            .await;
+                            if updated.map(|done| done.rows_affected() > 0).unwrap_or(false) {
+                                let _ = status_app.emit(
+                                    "session-status",
+                                    SessionStatusEvent {
+                                        session_id,
+                                        status: "needs_input".to_string(),
+                                        exit_code: None,
+                                    },
+                                );
+                            }
+                        }
                     });
                 }
                 Err(_) => break,
@@ -297,7 +516,8 @@ fn spawn_runner(
             // `running` status.
             let _ = sqlx::query(
                 "UPDATE sessions
-                 SET status = 'exited', exit_code = ?1, exited_at = datetime('now')
+                 SET status = 'exited', exit_code = ?1, exited_at = datetime('now'),
+                     needs_input_since = NULL, snoozed_until = NULL
                  WHERE id = ?2",
             )
             .bind(exit_code)
@@ -318,13 +538,80 @@ fn spawn_runner(
     Ok(pid)
 }
 
-fn runner_command(runner: &str) -> CommandBuilder {
+async fn set_session_status_impl(
+    app: &AppHandle,
+    pool: &sqlx::SqlitePool,
+    session_id: i64,
+    status: &str,
+) -> Result<(), String> {
+    validate_status(status)?;
+    match status {
+        "needs_input" => {
+            sqlx::query(
+                "UPDATE sessions
+                 SET status = 'needs_input',
+                     needs_input_since = COALESCE(needs_input_since, datetime('now')),
+                     snoozed_until = NULL
+                 WHERE id = ?1 AND status != 'exited'",
+            )
+            .bind(session_id)
+            .execute(pool)
+            .await
+            .map_err(|err| format!("failed to set Session status: {err}"))?;
+        }
+        "running" | "idle" => {
+            sqlx::query(
+                "UPDATE sessions
+                 SET status = ?1, needs_input_since = NULL, snoozed_until = NULL
+                 WHERE id = ?2 AND status != 'exited'",
+            )
+            .bind(status)
+            .bind(session_id)
+            .execute(pool)
+            .await
+            .map_err(|err| format!("failed to set Session status: {err}"))?;
+        }
+        "exited" => {
+            sqlx::query(
+                "UPDATE sessions
+                 SET status = 'exited',
+                     needs_input_since = NULL,
+                     snoozed_until = NULL,
+                     exited_at = COALESCE(exited_at, datetime('now'))
+                 WHERE id = ?1",
+            )
+            .bind(session_id)
+            .execute(pool)
+            .await
+            .map_err(|err| format!("failed to set Session status: {err}"))?;
+        }
+        _ => unreachable!(),
+    }
+    let _ = app.emit(
+        "session-status",
+        SessionStatusEvent {
+            session_id,
+            status: status.to_string(),
+            exit_code: None,
+        },
+    );
+    Ok(())
+}
+
+fn validate_status(status: &str) -> Result<(), String> {
+    match status {
+        "running" | "needs_input" | "idle" | "exited" => Ok(()),
+        _ => Err(format!("Invalid Session status `{status}`")),
+    }
+}
+
+fn shell_command(command_string: &str) -> CommandBuilder {
     #[cfg(unix)]
     {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let mut command = CommandBuilder::new(shell);
         command.arg("-lc");
-        command.arg(runner);
+        command.arg(command_string);
         command
     }
 
@@ -332,7 +619,86 @@ fn runner_command(runner: &str) -> CommandBuilder {
     {
         let mut command = CommandBuilder::new("cmd.exe");
         command.arg("/C");
-        command.arg(runner);
+        command.arg(command_string);
         command
     }
+}
+
+fn interpolate_runner_command(
+    template: &str,
+    workspace: &str,
+    issue_file: &str,
+    branch: &str,
+    resume_token: &str,
+) -> String {
+    template
+        .replace("{{workspace}}", &shell_escape(workspace))
+        .replace("{{issueFile}}", &shell_escape(issue_file))
+        .replace("{{branch}}", &shell_escape(branch))
+        .replace("{{resumeToken}}", &shell_escape(resume_token))
+}
+
+fn shell_escape(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn parse_runner_env(raw: &str) -> Result<HashMap<String, String>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw).map_err(|err| format!("Runner env_json is invalid JSON: {err}"))?;
+    let mut env = HashMap::new();
+    let Some(object) = value.as_object() else {
+        return Err("Runner env_json must be an object".to_string());
+    };
+    for (key, value) in object {
+        if key.starts_with("MARROW_") || key == "TERM" {
+            continue;
+        }
+        if let Some(value) = value.as_str() {
+            env.insert(key.clone(), value.to_string());
+        }
+    }
+    Ok(env)
+}
+
+fn current_branch(workspace_path: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(workspace_path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn detects_attention_signal(data: &str) -> bool {
+    data.contains('\u{0007}') || data.contains("\u{001b}]9;") || data.contains("\u{001b}]777;")
+}
+
+fn capture_resume_token(kind: &str, data: &str) -> Option<String> {
+    let markers: &[&str] = match kind {
+        "claude" => &["claude --resume ", "claude resume "],
+        "codex" => &["codex resume ", "codex --resume "],
+        _ => &["--resume ", "resume "],
+    };
+    for marker in markers {
+        if let Some(start) = data.find(marker) {
+            let rest = &data[start + marker.len()..];
+            let token = rest
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .trim_matches(|c: char| {
+                    matches!(c, '"' | '\'' | '`' | ',' | ';' | ')' | ']' | '}')
+                });
+            if !token.is_empty() {
+                return Some(token.to_string());
+            }
+        }
+    }
+    None
 }
