@@ -289,8 +289,12 @@ fn spawn_runner(
             .as_ref()
             .ok()
             .map(|status| i64::from(status.exit_code()));
+        registry.remove(session_id);
         let pool_for_update = pool.clone();
         tauri::async_runtime::spawn(async move {
+            // Persist the exit state before notifying so the React listener's
+            // refetch of list_sessions can't race ahead and read a stale
+            // `running` status.
             let _ = sqlx::query(
                 "UPDATE sessions
                  SET status = 'exited', exit_code = ?1, exited_at = datetime('now')
@@ -300,16 +304,15 @@ fn spawn_runner(
             .bind(session_id)
             .execute(&pool_for_update)
             .await;
+            let _ = status_app.emit(
+                "session-status",
+                SessionStatusEvent {
+                    session_id,
+                    status: "exited".to_string(),
+                    exit_code,
+                },
+            );
         });
-        registry.remove(session_id);
-        let _ = status_app.emit(
-            "session-status",
-            SessionStatusEvent {
-                session_id,
-                status: "exited".to_string(),
-                exit_code,
-            },
-        );
     });
 
     Ok(pid)
@@ -318,7 +321,7 @@ fn spawn_runner(
 fn runner_command(runner: &str) -> CommandBuilder {
     #[cfg(unix)]
     {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let mut command = CommandBuilder::new(shell);
         command.arg("-lc");
         command.arg(runner);
