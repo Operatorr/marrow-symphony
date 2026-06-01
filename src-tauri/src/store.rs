@@ -873,11 +873,15 @@ fn parse_shortstat(shortstat: &str) -> (i64, i64, i64) {
         let Ok(value) = window[0].parse::<i64>() else {
             continue;
         };
-        match window[1] {
-            "file" | "files" => changed_files = value,
-            "insertion" | "insertions" => insertions = value,
-            "deletion" | "deletions" => deletions = value,
-            _ => {}
+        // git renders the units as `files`, `insertions(+)`, and `deletions(-)`,
+        // so match on the prefix rather than the exact token.
+        let unit = window[1];
+        if unit.starts_with("file") {
+            changed_files = value;
+        } else if unit.starts_with("insertion") {
+            insertions = value;
+        } else if unit.starts_with("deletion") {
+            deletions = value;
         }
     }
     (changed_files, insertions, deletions)
@@ -1002,3 +1006,31 @@ FROM sessions s
 JOIN issues i ON i.id = s.issue_id
 JOIN projects p ON p.id = s.project_id
 WHERE s.id = ?1";
+
+#[cfg(test)]
+mod tests {
+    use super::parse_shortstat;
+
+    #[test]
+    fn parses_full_shortstat() {
+        assert_eq!(
+            parse_shortstat(" 2 files changed, 19 insertions(+), 3 deletions(-)"),
+            (2, 19, 3)
+        );
+    }
+
+    #[test]
+    fn parses_singular_and_partial_shortstat() {
+        assert_eq!(parse_shortstat(" 1 file changed, 1 insertion(+)"), (1, 1, 0));
+        assert_eq!(
+            parse_shortstat(" 1 file changed, 2 deletions(-)"),
+            (1, 0, 2)
+        );
+    }
+
+    #[test]
+    fn empty_shortstat_is_zero() {
+        assert_eq!(parse_shortstat(""), (0, 0, 0));
+        assert_eq!(parse_shortstat("   \n"), (0, 0, 0));
+    }
+}

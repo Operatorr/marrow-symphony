@@ -11,7 +11,13 @@
       "source": "Operatorr/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/code-review/SKILL.md",
-      "computedHash": "8bc6ed0750d21436fea4c6c161d938bd9312a4d6fe53a13c25936d995d045711"
+      "computedHash": "a96ca490adfe95a4696f7f8fb5b0e0696673679a91ce8ff295bd2dd0a5378891"
+    },
+    "deep-review": {
+      "source": "Operatorr/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/deep-review/SKILL.md",
+      "computedHash": "77aaa17509204cd0375417116d8febf22903c5272c82de238437235f228ad5cb"
     },
     "diagnose": {
       "source": "mattpocock/skills",
@@ -23,7 +29,7 @@
       "source": "Operatorr/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/git-commit/SKILL.md",
-      "computedHash": "21597fe65cd252543af325f7196a170c947339149066eeddc1227cf0441f063f"
+      "computedHash": "7eded8a9c76dbce8d1c7aa33448c1ef206d4648bbc2e222f4118190d692029a6"
     },
     "git-pr": {
       "source": "Operatorr/skills",

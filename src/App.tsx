@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -174,13 +174,13 @@ function App() {
   );
   const projectStats = useMemo(() => buildProjectStats(allSessions), [allSessions]);
 
-  const invalidateWork = () => {
+  const invalidateWork = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["projects"] });
     void queryClient.invalidateQueries({ queryKey: ["groups"] });
     void queryClient.invalidateQueries({ queryKey: ["issues"] });
     void queryClient.invalidateQueries({ queryKey: ["sessions"] });
     void queryClient.invalidateQueries({ queryKey: ["board-columns"] });
-  };
+  }, [queryClient]);
 
   return (
     <div className="app-shell">

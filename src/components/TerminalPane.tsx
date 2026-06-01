@@ -45,6 +45,15 @@ export function TerminalPane({
   const [actionError, setActionError] = useState<string | null>(null);
   const live = session.status !== "exited";
 
+  // Hold the latest callback in a ref so the terminal-construction effect below
+  // doesn't depend on its identity. The parent passes a fresh `invalidateWork`
+  // on every render, and onData fires it on every keystroke; without this the
+  // effect would dispose and rebuild the xterm instance constantly.
+  const onSessionChangedRef = useRef(onSessionChanged);
+  useEffect(() => {
+    onSessionChangedRef.current = onSessionChanged;
+  }, [onSessionChanged]);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return undefined;
@@ -110,7 +119,7 @@ export function TerminalPane({
     const dataDisposable = terminal.onData((data) => {
       if (live && !readOnly) {
         void writeToSession(session.id, data)
-          .then(() => onSessionChanged?.())
+          .then(() => onSessionChangedRef.current?.())
           .catch(() => undefined);
       }
     });
@@ -140,7 +149,6 @@ export function TerminalPane({
   }, [
     density,
     live,
-    onSessionChanged,
     readOnly,
     session.id,
     session.issueFilePath,

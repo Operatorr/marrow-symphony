@@ -214,6 +214,9 @@ pub async fn restart_session(
         .fetch_one(&state.pool)
         .await
         .map_err(|err| format!("failed to load Session for restart: {err}"))?;
+    // Restart replaces the existing Session — terminate it (and free its PTY)
+    // before spawning a new one in the same reused Workspace.
+    let _ = state.sessions.kill(input.session_id);
     start_session_impl(
         app,
         &state,
@@ -236,6 +239,10 @@ pub async fn resume_session(
         .fetch_one(&state.pool)
         .await
         .map_err(|err| format!("failed to load Session for resume: {err}"))?;
+    // Resuming hands the source Session's captured token to a fresh process; the
+    // old one (if still live) must be terminated so we don't run two agents in
+    // the same Workspace. The persisted row keeps its resume_token after the kill.
+    let _ = state.sessions.kill(input.session_id);
     start_session_impl(
         app,
         &state,
