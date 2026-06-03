@@ -435,8 +435,15 @@ pub async fn workspace_diff_impl(
     }
 
     let branch = git_output(&workspace.path, ["rev-parse", "--abbrev-ref", "HEAD"]).ok();
-    let stat = git_output(&workspace.path, ["diff", "--stat"]).unwrap_or_default();
-    let shortstat = git_output(&workspace.path, ["diff", "--shortstat"]).unwrap_or_default();
+    // Compare against HEAD so staged edits show up too; fall back to the index
+    // when there is no commit yet (unborn HEAD).
+    let diff_ref = if git_output(&workspace.path, ["rev-parse", "--verify", "HEAD"]).is_ok() {
+        "HEAD"
+    } else {
+        "--cached"
+    };
+    let stat = git_output(&workspace.path, ["diff", diff_ref, "--stat"]).unwrap_or_default();
+    let shortstat = git_output(&workspace.path, ["diff", diff_ref, "--shortstat"]).unwrap_or_default();
     let (changed_files, insertions, deletions) = parse_shortstat(&shortstat);
     let summary = if stat.trim().is_empty() {
         "No uncommitted changes.".to_string()

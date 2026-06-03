@@ -387,6 +387,20 @@ impl SessionRegistry {
     }
 }
 
+/// A unit of work for the per-session scrollback consumer. Chunks and the final
+/// exit marker flow through the same channel so the consumer writes them to the
+/// DB in strict reader order (see `spawn_runner`).
+enum ScrollbackMsg {
+    Chunk {
+        data: String,
+        needs_input: bool,
+        resume_token: Option<String>,
+    },
+    Exited {
+        exit_code: Option<i64>,
+    },
+}
+
 fn spawn_runner(
     app: AppHandle,
     pool: sqlx::SqlitePool,
@@ -443,9 +457,89 @@ fn spawn_runner(
         },
     )?;
 
+    // A single consumer task drains this channel and performs every scrollback
+    // write sequentially, so persistence happens in strict reader order even
+    // though the pool hands out several connections. Spawning a task per chunk
+    // (the previous design) let later chunks land before earlier ones.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ScrollbackMsg>();
+    let consumer_pool = pool.clone();
+    let consumer_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            match msg {
+                ScrollbackMsg::Chunk {
+                    data,
+                    needs_input,
+                    resume_token,
+                } => {
+                    let _ = sqlx::query(
+                        "UPDATE sessions
+                         SET output_scrollback = substr(COALESCE(output_scrollback, '') || ?1, -?2),
+                             last_output_at = datetime('now'),
+                             resume_token = COALESCE(?3, resume_token)
+                         WHERE id = ?4",
+                    )
+                    .bind(&data)
+                    .bind(96_000_i64)
+                    .bind(resume_token)
+                    .bind(session_id)
+                    .execute(&consumer_pool)
+                    .await;
+
+                    if needs_input {
+                        let updated = sqlx::query(
+                            "UPDATE sessions
+                             SET status = 'needs_input',
+                                 needs_input_since = COALESCE(needs_input_since, datetime('now')),
+                                 snoozed_until = NULL
+                             WHERE id = ?1 AND status != 'exited'",
+                        )
+                        .bind(session_id)
+                        .execute(&consumer_pool)
+                        .await;
+                        if updated.map(|done| done.rows_affected() > 0).unwrap_or(false) {
+                            let _ = consumer_app.emit(
+                                "session-status",
+                                SessionStatusEvent {
+                                    session_id,
+                                    status: "needs_input".to_string(),
+                                    exit_code: None,
+                                },
+                            );
+                        }
+                    }
+                }
+                ScrollbackMsg::Exited { exit_code } => {
+                    // Sequenced after every scrollback write, so the exit state
+                    // is persisted only once all output is durable. Persisting
+                    // before notifying also keeps the React listener's refetch
+                    // of list_sessions from reading a stale `running` status.
+                    let _ = sqlx::query(
+                        "UPDATE sessions
+                         SET status = 'exited', exit_code = ?1, exited_at = datetime('now'),
+                             needs_input_since = NULL, snoozed_until = NULL
+                         WHERE id = ?2",
+                    )
+                    .bind(exit_code)
+                    .bind(session_id)
+                    .execute(&consumer_pool)
+                    .await;
+                    let _ = consumer_app.emit(
+                        "session-status",
+                        SessionStatusEvent {
+                            session_id,
+                            status: "exited".to_string(),
+                            exit_code,
+                        },
+                    );
+                }
+            }
+        }
+    });
+
     let output_app = app.clone();
-    let output_pool = pool.clone();
     let output_runner_kind = runner_kind.to_string();
+    let reader_tx = tx.clone();
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
         loop {
@@ -453,6 +547,8 @@ fn spawn_runner(
                 Ok(0) => break,
                 Ok(size) => {
                     let data = String::from_utf8_lossy(&buffer[..size]).to_string();
+                    // Emit synchronously, in reader order, so the live terminal
+                    // stays instant and is unaffected by DB write latency.
                     let _ = output_app.emit(
                         "session-output",
                         SessionOutputEvent {
@@ -462,53 +558,26 @@ fn spawn_runner(
                     );
                     let needs_input = detects_attention_signal(&data);
                     let resume_token = capture_resume_token(&output_runner_kind, &data);
-                    let pool = output_pool.clone();
-                    let status_app = output_app.clone();
-                    tauri::async_runtime::spawn(async move {
-                        let _ = sqlx::query(
-                            "UPDATE sessions
-                             SET output_scrollback = substr(COALESCE(output_scrollback, '') || ?1, -?2),
-                                 last_output_at = datetime('now'),
-                                 resume_token = COALESCE(?3, resume_token)
-                             WHERE id = ?4",
-                        )
-                        .bind(&data)
-                        .bind(96_000_i64)
-                        .bind(resume_token)
-                        .bind(session_id)
-                        .execute(&pool)
-                        .await;
-
-                        if needs_input {
-                            let updated = sqlx::query(
-                                "UPDATE sessions
-                                 SET status = 'needs_input',
-                                     needs_input_since = COALESCE(needs_input_since, datetime('now')),
-                                     snoozed_until = NULL
-                                 WHERE id = ?1 AND status != 'exited'",
-                            )
-                            .bind(session_id)
-                            .execute(&pool)
-                            .await;
-                            if updated.map(|done| done.rows_affected() > 0).unwrap_or(false) {
-                                let _ = status_app.emit(
-                                    "session-status",
-                                    SessionStatusEvent {
-                                        session_id,
-                                        status: "needs_input".to_string(),
-                                        exit_code: None,
-                                    },
-                                );
-                            }
-                        }
-                    });
+                    // `send` is synchronous and non-blocking, so it is safe to
+                    // call from this blocking reader thread. An error means the
+                    // consumer is gone, so there is nothing left to persist.
+                    if reader_tx
+                        .send(ScrollbackMsg::Chunk {
+                            data,
+                            needs_input,
+                            resume_token,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
                 Err(_) => break,
             }
         }
     });
 
-    let status_app = app;
+    let exit_tx = tx;
     thread::spawn(move || {
         let exit_status = child.wait();
         let exit_code = exit_status
@@ -516,30 +585,7 @@ fn spawn_runner(
             .ok()
             .map(|status| i64::from(status.exit_code()));
         registry.remove(session_id);
-        let pool_for_update = pool.clone();
-        tauri::async_runtime::spawn(async move {
-            // Persist the exit state before notifying so the React listener's
-            // refetch of list_sessions can't race ahead and read a stale
-            // `running` status.
-            let _ = sqlx::query(
-                "UPDATE sessions
-                 SET status = 'exited', exit_code = ?1, exited_at = datetime('now'),
-                     needs_input_since = NULL, snoozed_until = NULL
-                 WHERE id = ?2",
-            )
-            .bind(exit_code)
-            .bind(session_id)
-            .execute(&pool_for_update)
-            .await;
-            let _ = status_app.emit(
-                "session-status",
-                SessionStatusEvent {
-                    session_id,
-                    status: "exited".to_string(),
-                    exit_code,
-                },
-            );
-        });
+        let _ = exit_tx.send(ScrollbackMsg::Exited { exit_code });
     });
 
     Ok(pid)
