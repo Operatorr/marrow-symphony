@@ -1,26 +1,32 @@
 ---
 name: code-review
-description: Perform deep, context-aware code reviews for GitHub pull requests or local branch changes. Use when the user asks to review a PR, analyze pull request changes, review current branch changes, run automated code review, or mentions PR #X.
+description: "Perform a fast, light, conservative code review for GitHub pull requests or local branch changes. Use for /code-review, quick PR reviews, current-branch reviews, and default review requests when the user has not asked for a deep, exhaustive, CodeRabbit-style, nitpick-level, or find-everything review. Aim for the top 1-3 material issues; use deep-review for exhaustive coverage."
 ---
 
 # Code Review
 
-Review code like a senior engineer: understand the intent, inspect the diff in context, run available checks, identify real risks, and produce actionable feedback with copy-paste-ready handoff prompts.
+Run a fast, light review like a pragmatic senior engineer: understand the intent, inspect the diff in enough context to catch real risks, and report only the highest-signal findings.
+
+This is the default review skill for `/code-review`. It optimizes for **precision and speed**, usually producing 0-3 issues. For exhaustive, CodeRabbit-style coverage with per-file sub-agents, full scanner batteries, inline comments, and nitpicks, use `deep-review` instead.
 
 ## Use Cases
 
 ```bash
-Review PR #123 with full context
+/code-review https://github.com/OWNER/REPO/pull/123
 /skill:code-review https://github.com/OWNER/REPO/pull/123
-Review the current branch against main as if it were a PR
-Do a security-focused review of this PR
+Review PR #123 quickly
+Review the current branch against main
+Do a security-focused light review of this PR
 Review these local changes but do not post to GitHub
 ```
 
 ## Principles
 
-- Prioritize bugs, security issues, data loss, regressions, broken edge cases, missing tests, and maintainability risks.
-- Do not nitpick personal style. Only flag style issues when they violate explicit project rules.
+- Prioritize bugs, security issues, data loss, regressions, broken edge cases, API compatibility issues, and missing tests with clear risk.
+- Aim for the top 1-3 material findings. Cap the report at 3 findings unless additional clear Critical or High issues are present.
+- Prefer false negatives over noisy findings. Do not report speculative issues without concrete evidence from the diff or surrounding code.
+- Do not nitpick. Skip naming, formatting, import order, wording, docs, and micro-refactors unless an explicit project rule makes them merge-blocking.
+- Do not fan out sub-agents or run the `deep-review` workflow from this skill.
 - Be specific and actionable. Every finding should include the exact file/location, impact, and a concrete fix.
 - Review only by default. Do not edit code unless the user explicitly asks you to fix the issues.
 - Treat a direct GitHub PR URL as permission to post the completed review back to that PR, unless the user says not to post.
@@ -68,9 +74,9 @@ git diff <merge-base>...HEAD
 
 Adjust the base branch if the repository uses a different default branch.
 
-### Phase 2: Gather Project Context
+### Phase 2: Gather Focused Project Context
 
-Read the changed files and enough surrounding code to understand the impact. Also check project standards in this priority order:
+Read the changed files and only enough surrounding code to validate likely impact. Check project standards in this priority order:
 
 1. `REVIEW.md` in the target repository root, if present
 2. `CLAUDE.md`, `.claude.md`, or equivalent agent instructions
@@ -87,18 +93,17 @@ If this skill's bundled reference files are available, use them as support mater
 
 ### Phase 3: Run Available Checks
 
-When safe and available, run relevant checks for the repository:
+Run only cheap, already-configured checks that are likely to finish quickly and directly cover the changed area:
 
 - Type checks
 - Unit tests for changed areas
 - Linters/format checks
-- Security scanners if already configured
 
-Do not install new tools or run destructive commands without permission. If checks are too expensive or unavailable, say so and continue with manual review.
+Do not install tools, invoke one-shot package downloads, run broad scanner batteries, or run expensive full-suite checks by default. If the right check is too expensive or unavailable, note that it was not run and continue with manual review.
 
 ### Phase 4: Analyze in Order
 
-Analyze the change in this order:
+Analyze the change in this order, stopping once the highest-signal issues are identified:
 
 1. **Intent** — What is the PR/change trying to accomplish?
 2. **Correctness** — logic errors, invalid assumptions, broken edge cases, race conditions, bad state transitions
@@ -107,22 +112,29 @@ Analyze the change in this order:
 5. **Data & API compatibility** — migrations, schema changes, response shapes, backwards compatibility
 6. **Testing** — missing coverage for new logic, regression tests, edge cases, integration boundaries
 7. **Performance** — N+1 queries, hot path regressions, unnecessary expensive work
-8. **Maintainability** — unnecessary complexity, duplicated logic, poor naming, inconsistency with project patterns
+8. **Maintainability** — only concrete complexity or inconsistency likely to cause bugs
 
-For large PRs, focus first on Critical and High issues. Summarize lower-severity patterns instead of producing noisy line-by-line comments.
+For large PRs, inspect the highest-risk files first and sample enough of the rest to catch obvious blockers. If the change is too large for a meaningful light review, say so briefly and recommend `/deep-review` for exhaustive coverage.
+
+Suppression rules:
+
+- Omit Low/Nit findings by default.
+- Report missing tests only when a specific new behavior or regression risk clearly needs coverage.
+- Do not report issues that require assumptions about undocumented product requirements.
+- Do not summarize long lists of minor issues; leave them for `deep-review`.
 
 ## Severity Scale
 
 - **Critical** — security vulnerability, data loss, production crash, auth bypass, major regression
 - **High** — logic bug, missing critical error handling, broken feature, serious performance issue
-- **Medium** — missing test, maintainability risk, code smell likely to cause future bugs, minor behavior issue
-- **Low/Nit** — explicit project style violation or small clarity issue
+- **Medium** — missing test with concrete regression risk, maintainability risk likely to cause future bugs, minor behavior issue
+- **Low/Nit** — normally out of scope for `code-review`; use only for explicit project-rule violations that should block merge
 
 Rule of thumb: if you would not block a real merge for it, do not mark it Medium or higher.
 
 ## Output Format
 
-Start with a short overall assessment. Then list findings from highest to lowest severity.
+Start with a short overall assessment. Then list findings from highest to lowest severity. Keep the report concise: 0-3 findings is the expected result for most reviews.
 
 For every issue, use this format:
 

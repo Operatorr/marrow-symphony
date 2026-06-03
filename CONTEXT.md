@@ -70,8 +70,9 @@ The runtime state of a Session, used to drive attention UI (badges, notification
 - **Running** — the agent is actively producing output; no human needed.
 - **Needs Input** — the agent appears to be blocked waiting on the human. The trigger for a desktop
   notification and for entry into the Feed. Because Marrow is Runner-agnostic and does not speak the
-  agent's protocol, this is *inferred* (prompt-like output / quiet PTY) and is best-effort; the human
-  can always set it manually.
+  agent's protocol, this is *inferred* from terminal-level signals the Runner emits — the terminal bell
+  / OSC notification sequences, or an explicit `marrow notify` hint from the Runner's hooks — and is
+  best-effort; the human can always set it manually.
 - **Idle** — alive but quiet, with no detected prompt; ambiguous (distinct from Needs Input only by
   heuristic).
 - **Exited** — the Runner process ended (clean or crashed).
@@ -79,12 +80,25 @@ _Avoid_: Needs Attention (use "Needs Input" for the human-blocked state)
 
 **Runner**:
 A configurable profile for launching a coding-agent CLI in a Session — e.g. the interactive `claude`
-TUI, `codex`, or `kilo`. Holds a launch command, a resume command (for session resume), env injection
-(including `MARROW_ISSUE_FILE`), and runs cwd'd to the Workspace; commands interpolate variables like
-`{{workspace}}`, `{{issueFile}}`, `{{branch}}`. Ships as editable presets plus user-defined custom
+TUI, `codex`, or `kilo`. Holds a launch command, a resume command (for session resume), and its own
+env injection, and runs cwd'd to the Workspace; commands interpolate variables like
+`{{workspace}}`, `{{issueFile}}`, `{{branch}}`, `{{resumeToken}}`. Separately, Marrow injects a fixed
+layer of **system context** the Runner cannot edit or shadow (the materialized Issue file via
+`MARROW_ISSUE_FILE`, plus identifiers used for attention signalling); the Runner's own env layers
+beneath it. Ships as editable presets plus user-defined custom
 Runners. A Project sets a default Runner; an Issue can override it. Marrow is Runner-agnostic — it
 spawns the configured command and does not speak any one agent's protocol.
 _Avoid_: Agent (the AI doing the work), Tool, Model
+
+**Context bridge** (the `marrow` sidecar):
+The Marrow-owned channel through which a Session's agent **reads** its Issue's context and **writes**
+context back — without ever holding credentials. Implemented as the `marrow` sidecar: a small CLI the
+Runner can call (`notify`, `issue read`, `issue comment`, `diff`) that talks to the app over a per-app
+socket; Marrow resolves Session → Issue → Project and serves the request **locally** (the Issue in
+SQLite + the materialized file) or, when the Project is linked, **proxies it to Linear**. This is the
+seam that lets you write a prompt in Linear, hand it to *any* agent, and have the agent write progress
+back. See `docs/adr/0009-*` (and `0008-*` for the shared socket).
+_Avoid_: Plugin, Agent API (the agent *calls* it; it is not the agent or its protocol)
 
 ## Example dialogue
 

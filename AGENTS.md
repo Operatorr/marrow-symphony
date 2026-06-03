@@ -25,8 +25,10 @@ a **Feed** (the signature surface: the next agent that needs you, one at a time)
 - **`docs/design-docs/ui-io-spec.md`** — the screen + IO spec for every user-facing surface (the three
   views, Issue page, terminal frame, forms, attention model).
 - **`docs/exec-plans/active/`** — the current build plans. Start here to implement:
-  [`0001-scaffold-and-first-slice.md`](docs/exec-plans/active/0001-scaffold-and-first-slice.md) is
-  the tracer-bullet slice (scaffold → create Project → Issue → embedded agent terminal).
+  [`0002-full-functional-ui.md`](docs/exec-plans/active/0002-full-functional-ui.md) is the active
+  slice (App Shell + Board + Cockpit + Feed + Issue page, wired to live data).
+  [`0001-scaffold-and-first-slice.md`](docs/exec-plans/active/0001-scaffold-and-first-slice.md) is the
+  done tracer-bullet slice (scaffold → create Project → Issue → embedded agent terminal).
 
 ## Ancestor, not contract
 

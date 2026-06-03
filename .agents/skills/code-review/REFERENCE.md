@@ -1,6 +1,8 @@
 # Code Review Reference
 
-Supporting templates, examples, and guidelines for the `code-review` skill.
+Supporting templates, examples, and guidelines for the light `code-review` skill.
+
+Use this reference for high-signal reviews only. The normal output is 0-3 material findings; exhaustive low-severity and nitpick coverage belongs in `deep-review`.
 
 ## Full Handoff Prompt Template
 
@@ -48,10 +50,11 @@ After the change, add a unit test case for the "attendee not found" scenario.
 | --- | --- | --- |
 | Critical | Immediate data loss, security breach, production crash, auth bypass | SQL injection, missing auth on sensitive endpoint, crash in startup path |
 | High | Logic bug that breaks a core feature, missing critical error handling, major performance regression | Wrong calculation in pricing engine, payment race condition, N+1 query on hot path |
-| Medium | Maintainability issue likely to cause future bugs, missing tests for new logic, minor behavior issue | Duplicate validation logic, magic values, missing edge-case test |
-| Low | Explicit style or clarity issue with low risk | Wrong import order when standardized, confusing name in touched code |
+| Medium | Maintainability issue likely to cause future bugs, missing tests for a concrete regression risk, minor behavior issue | Duplicate validation logic, magic values that affect behavior, missing edge-case test |
+| Low | Normally omitted; use only when an explicit project rule makes the issue merge-blocking | Required generated file is missing from a project that requires it |
 
 Rule of thumb: if you would not block a real merge for it, do not mark it Medium or higher.
+Do not include Low/Nit findings just to fill space.
 
 ## Sample Review Output
 
@@ -104,7 +107,7 @@ This PR adds attendee activity tracking to the event endpoint. The core directio
 
 ## GitHub PR Comment Template
 
-Use this one-comment format when posting a review to a GitHub PR. Keep the summary and statistics visible, and wrap every finding in its own collapsible section.
+Use this one-comment format when posting a review to a GitHub PR. Keep the summary and statistics visible, and wrap every material finding in its own collapsible section.
 
 ````markdown
 # Code Review
