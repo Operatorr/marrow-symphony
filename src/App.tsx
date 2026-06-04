@@ -2569,7 +2569,8 @@ function LinearConnectDialog({
                   <p className="text-[12px] text-[var(--fg3)]">
                     Create an OAuth application in Linear → Settings → API → OAuth applications with redirect URI{" "}
                     <code className="token-hint">{LINEAR_OAUTH_REDIRECT}</code>, then authorize below. After approving,
-                    copy the <code className="token-hint">code</code> value from the address bar and paste it back here.
+                    copy the <em>entire URL</em> from the address bar (it carries the code and a one-time security
+                    token) and paste it below.
                   </p>
                   <input
                     value={clientId}
@@ -2593,9 +2594,9 @@ function LinearConnectDialog({
                   <input
                     value={code}
                     onChange={(event) => setCode(event.target.value)}
-                    placeholder="Authorization code"
+                    placeholder="Paste the full redirect URL"
                     className="field font-mono"
-                    aria-label="Linear authorization code"
+                    aria-label="Linear redirect URL"
                   />
                   {error && <div className="text-[12px] text-destructive">{error}</div>}
                   <Button

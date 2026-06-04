@@ -17,12 +17,20 @@ Marrow supports **both** auth methods from v1, abstracted behind a single "Linea
 **Secret handling (SPEC §15.3):** tokens are **never logged**. The credential layer exposes only
 "get a valid token for connection X."
 
-**v1 implementation note (exec-plan 0002 follow-up):** the connection (method + token) is persisted
-**locally in SQLite** (`linear_connection`, single row), not the OS keychain. This is a deliberate
-local-first v1 choice — the credential never leaves the machine and is never logged, satisfying the
-hard SPEC §15.3 requirement ("do not log tokens"). The OS-keychain aspiration above is **deferred**;
-moving the token to the keychain (e.g. the `keyring` crate) and OAuth token refresh are tracked as
-hardening follow-ups, not part of the current slice.
+**v1 implementation note (exec-plan 0002):** the access token (personal API key or OAuth token) is
+held in the **OS keychain** (macOS Keychain / Windows Credential Manager / Linux Secret Service) via
+the `keyring` crate — it is **never** written to SQLite. The `linear_connection` row keeps only
+non-secret metadata (`method` + `workspace_name`); a status check reads that row alone and so never
+touches the keychain. A status check thus cannot trigger a keychain-access prompt; only operations
+that call Linear (list/import) read the token back. Disconnecting deletes both the keychain entry and
+the row. _(Earlier drafts stored the token in SQLite as a local-first shortcut; migration
+`20260605000000_linear_credential_to_keychain` purges that column, so an existing connection must be
+re-entered once after upgrading.)_
+
+**OAuth CSRF (resolved):** the authorize request carries an unguessable, single-use `state` generated
+server-side and held in memory; completing the flow requires the same `state` echoed back in the
+redirect URL (constant-time compared, consumed on match). The user pastes the full redirect URL so
+both `code` and `state` round-trip. OAuth **token refresh** remains a deferred hardening follow-up.
 
 ## Mapping
 

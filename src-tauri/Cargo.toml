@@ -29,3 +29,16 @@ sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "run
 tokio = { version = "1.52.3", features = ["full"] }
 portable-pty = "0.9.0"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Random OAuth `state` + constant-time comparison (already in the tree via rustls).
+ring = "0.17"
+
+# The Linear credential is held in the OS keychain, never in the DB. Each platform
+# compiles only its own native store, so no cross-platform secret-store deps leak in.
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }

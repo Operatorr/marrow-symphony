@@ -47,7 +47,9 @@ pub struct LinearImportResult {
     pub imported: i64,
 }
 
-#[derive(Debug, Deserialize)]
+// No `Debug` derive: this carries a secret (the API key), so it must never be
+// formattable into a log line or panic message.
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectApiKeyInput {
     pub api_key: String,
@@ -59,7 +61,9 @@ pub struct AuthorizeUrlInput {
     pub client_id: String,
 }
 
-#[derive(Debug, Deserialize)]
+// No `Debug` derive: this carries a secret (the OAuth client secret) and an
+// authorization code, so it must never be formattable into logs or panics.
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompleteOauthInput {
     pub client_id: String,
@@ -117,15 +121,44 @@ fn body_snippet(body: &str) -> String {
     }
 }
 
-/// Tolerate a user pasting the whole `…/callback?code=…&state=…` redirect URL
-/// instead of just the authorization code.
+/// Pull a single query parameter out of a pasted `…/callback?code=…&state=…`
+/// redirect URL. Returns `None` if the input is not a URL or lacks the key.
+fn extract_oauth_param(raw: &str, key: &str) -> Option<String> {
+    let url = reqwest::Url::parse(raw).ok()?;
+    url.query_pairs()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.into_owned())
+}
+
+/// Tolerate a user pasting the whole redirect URL instead of the bare code.
 fn extract_oauth_code(raw: &str) -> String {
-    if let Ok(url) = reqwest::Url::parse(raw) {
-        if let Some((_, value)) = url.query_pairs().find(|(key, _)| key == "code") {
-            return value.into_owned();
-        }
+    extract_oauth_param(raw, "code").unwrap_or_else(|| raw.to_string())
+}
+
+/// An unguessable, single-use `state` for the OAuth authorize request (CSRF
+/// guard): 32 random bytes, hex-encoded.
+fn generate_state() -> Result<String, String> {
+    use ring::rand::{SecureRandom, SystemRandom};
+    let mut bytes = [0u8; 32];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| "failed to generate an OAuth state value".to_string())?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+/// `state` comparison in time independent of *where* a mismatch occurs, so a
+/// wrong value can't be recovered byte-by-byte by timing. The length is not
+/// secret (states are always fixed-width hex), so an early length check is fine.
+fn states_match(expected: &str, returned: &str) -> bool {
+    let (expected, returned) = (expected.as_bytes(), returned.as_bytes());
+    if expected.len() != returned.len() {
+        return false;
     }
-    raw.to_string()
+    let mut diff = 0u8;
+    for (a, b) in expected.iter().zip(returned.iter()) {
+        diff |= a ^ b;
+    }
+    diff == 0
 }
 
 /// Run a GraphQL operation against Linear and return its `data` payload.
@@ -166,20 +199,75 @@ async fn graphql(method: &str, token: &str, body: serde_json::Value) -> Result<s
         .ok_or_else(|| "Linear response had no data".to_string())
 }
 
-async fn get_connection(pool: &SqlitePool) -> Result<Option<(String, String, Option<String>)>, String> {
-    sqlx::query_as::<_, (String, String, Option<String>)>(
-        "SELECT method, access_token, workspace_name FROM linear_connection WHERE id = 1",
+// ── Credential storage ───────────────────────────────────────────────────────
+// The access token (personal API key or OAuth token) lives in the OS keychain,
+// never in SQLite. The DB row holds only non-secret metadata (method + workspace
+// name). Keychain entries are keyed by a fixed app service + account.
+
+// The OS keychain store is available on the desktop platforms Marrow targets. On
+// any other target the `keyring` dependency is intentionally absent (see the
+// per-target sections in Cargo.toml), so fail with a clear message rather than a
+// confusing missing-crate error.
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+compile_error!(
+    "Marrow's Linear credential store requires macOS, Windows, or Linux (the OS keychain)."
+);
+
+const KEYCHAIN_SERVICE: &str = "com.marrow.symphony.linear";
+const KEYCHAIN_ACCOUNT: &str = "access-token";
+
+fn keychain_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
+        .map_err(|err| format!("failed to open the OS keychain: {err}"))
+}
+
+fn store_token(token: &str) -> Result<(), String> {
+    keychain_entry()?
+        .set_password(token)
+        .map_err(|err| format!("failed to store the Linear credential in the keychain: {err}"))
+}
+
+fn load_token() -> Result<Option<String>, String> {
+    match keychain_entry()?.get_password() {
+        Ok(token) => Ok(Some(token)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(err) => Err(format!(
+            "failed to read the Linear credential from the keychain: {err}"
+        )),
+    }
+}
+
+fn delete_token() -> Result<(), String> {
+    match keychain_entry()?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(err) => Err(format!(
+            "failed to remove the Linear credential from the keychain: {err}"
+        )),
+    }
+}
+
+/// Non-secret connection metadata from the DB (no token). A status check goes
+/// through here, so simply viewing connection state never touches the keychain
+/// (and so cannot trigger an OS keychain-access prompt).
+async fn connection_meta(pool: &SqlitePool) -> Result<Option<(String, Option<String>)>, String> {
+    sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT method, workspace_name FROM linear_connection WHERE id = 1",
     )
     .fetch_optional(pool)
     .await
     .map_err(|err| format!("failed to read Linear connection: {err}"))
 }
 
+/// The (method, token) needed to call Linear: method from the DB, token from the
+/// keychain. Errors if either is absent (e.g. the keychain entry was cleared).
 async fn require_connection(pool: &SqlitePool) -> Result<(String, String), String> {
-    get_connection(pool)
+    let (method, _) = connection_meta(pool)
         .await?
-        .map(|(method, token, _)| (method, token))
-        .ok_or_else(|| "Linear is not connected".to_string())
+        .ok_or_else(|| "Linear is not connected".to_string())?;
+    let token = load_token()?.ok_or_else(|| {
+        "Linear credential is missing from the keychain — please reconnect".to_string()
+    })?;
+    Ok((method, token))
 }
 
 async fn save_connection(
@@ -188,16 +276,17 @@ async fn save_connection(
     token: &str,
     workspace_name: Option<&str>,
 ) -> Result<(), String> {
+    // Keychain first: if the metadata write below fails, the status reads back as
+    // disconnected (no row) rather than connected-without-a-token — the safe failure.
+    store_token(token)?;
     sqlx::query(
-        "INSERT INTO linear_connection (id, method, access_token, workspace_name)
-         VALUES (1, ?1, ?2, ?3)
+        "INSERT INTO linear_connection (id, method, workspace_name)
+         VALUES (1, ?1, ?2)
          ON CONFLICT(id) DO UPDATE SET
            method = excluded.method,
-           access_token = excluded.access_token,
            workspace_name = excluded.workspace_name",
     )
     .bind(method)
-    .bind(token)
     .bind(workspace_name)
     .execute(pool)
     .await
@@ -206,8 +295,8 @@ async fn save_connection(
 }
 
 async fn current_status(pool: &SqlitePool) -> Result<LinearConnectionView, String> {
-    Ok(match get_connection(pool).await? {
-        Some((method, _, workspace_name)) => LinearConnectionView {
+    Ok(match connection_meta(pool).await? {
+        Some((method, workspace_name)) => LinearConnectionView {
             connected: true,
             method: Some(method),
             workspace_name,
@@ -264,13 +353,14 @@ pub async fn linear_connect_api_key(
 
 #[tauri::command]
 pub async fn linear_authorize_url(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     input: AuthorizeUrlInput,
 ) -> Result<String, String> {
     let client_id = input.client_id.trim();
     if client_id.is_empty() {
         return Err("A Client ID is required".to_string());
     }
+    let oauth_state = generate_state()?;
     let url = reqwest::Url::parse_with_params(
         AUTHORIZE_URL,
         &[
@@ -278,10 +368,17 @@ pub async fn linear_authorize_url(
             ("redirect_uri", REDIRECT_URI),
             ("response_type", "code"),
             ("scope", SCOPE),
+            ("state", oauth_state.as_str()),
             ("prompt", "consent"),
         ],
     )
     .map_err(|err| format!("failed to build authorize URL: {err}"))?;
+    // Remember the state until the matching callback is completed (one-shot CSRF
+    // guard). A fresh authorize request overwrites any earlier pending state.
+    *state
+        .oauth_state
+        .lock()
+        .map_err(|_| "internal lock error".to_string())? = Some(oauth_state);
     Ok(url.to_string())
 }
 
@@ -290,6 +387,36 @@ pub async fn linear_complete_oauth(
     state: State<'_, AppState>,
     input: CompleteOauthInput,
 ) -> Result<LinearConnectionView, String> {
+    // CSRF guard: the `state` Linear echoes back in the redirect URL must match the
+    // one we generated for this authorization. We *verify* it here but do not yet
+    // consume it — it is consumed only after a successful token exchange (below), so
+    // a transient network failure leaves the authorization retryable. Scope the
+    // guard so it drops before any `.await` (a std Mutex guard is not Send).
+    let returned_state = extract_oauth_param(input.code.trim(), "state");
+    let verified_state = {
+        let pending = state
+            .oauth_state
+            .lock()
+            .map_err(|_| "internal lock error".to_string())?;
+        match (pending.as_deref(), returned_state.as_deref()) {
+            (Some(expected), Some(returned)) if states_match(expected, returned) => {
+                expected.to_string()
+            }
+            (None, _) => {
+                return Err(
+                    "No pending Linear authorization — click \"Authorize in browser\" first."
+                        .to_string(),
+                )
+            }
+            _ => {
+                return Err("Linear authorization could not be verified. Paste the full redirect \
+                            URL from the address bar (it carries the code and a one-time security \
+                            token), then retry."
+                    .to_string())
+            }
+        }
+    };
+
     let client = http_client()?;
     let code = extract_oauth_code(input.code.trim());
     let response = client
@@ -324,6 +451,15 @@ pub async fn linear_complete_oauth(
         .and_then(|value| value.as_str())
         .ok_or_else(|| "Linear did not return an access token".to_string())?
         .to_string();
+
+    // The exchange succeeded — consume the one-shot state so the callback can't be
+    // replayed. Only clear it if a newer authorize request hasn't already replaced it.
+    if let Ok(mut pending) = state.oauth_state.lock() {
+        if pending.as_deref() == Some(verified_state.as_str()) {
+            *pending = None;
+        }
+    }
+
     let workspace = fetch_workspace_name("oauth", &token).await?;
     save_connection(&state.pool, "oauth", &token, workspace.as_deref()).await?;
     current_status(&state.pool).await
@@ -331,6 +467,8 @@ pub async fn linear_complete_oauth(
 
 #[tauri::command]
 pub async fn linear_disconnect(state: State<'_, AppState>) -> Result<LinearConnectionView, String> {
+    // Remove the secret from the keychain first, then the metadata row.
+    delete_token()?;
     sqlx::query("DELETE FROM linear_connection")
         .execute(&state.pool)
         .await
@@ -559,7 +697,10 @@ pub async fn linear_import_issues(
 
 #[cfg(test)]
 mod tests {
-    use super::{auth_header, map_state};
+    use super::{
+        auth_header, extract_oauth_code, extract_oauth_param, generate_state, map_state,
+        states_match,
+    };
 
     #[test]
     fn api_key_sent_verbatim_oauth_uses_bearer() {
@@ -576,5 +717,38 @@ mod tests {
         assert_eq!(map_state("completed"), "done");
         assert_eq!(map_state("canceled"), "canceled");
         assert_eq!(map_state("something-new"), "todo");
+    }
+
+    #[test]
+    fn extracts_code_and_state_from_redirect_url() {
+        let url = "http://localhost:3939/callback?code=abc123&state=deadbeef";
+        assert_eq!(extract_oauth_param(url, "code"), Some("abc123".to_string()));
+        assert_eq!(extract_oauth_param(url, "state"), Some("deadbeef".to_string()));
+        assert_eq!(extract_oauth_param(url, "missing"), None);
+    }
+
+    #[test]
+    fn extract_code_falls_back_to_raw_when_not_a_url() {
+        // A bare pasted code (no URL) is returned verbatim …
+        assert_eq!(extract_oauth_code("just-a-code"), "just-a-code");
+        // … but has no `state`, so the CSRF check below will reject it.
+        assert_eq!(extract_oauth_param("just-a-code", "state"), None);
+    }
+
+    #[test]
+    fn generated_state_is_unguessable_and_unique() {
+        let a = generate_state().expect("state a");
+        let b = generate_state().expect("state b");
+        assert_eq!(a.len(), 64); // 32 bytes, hex-encoded
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn state_comparison_is_exact() {
+        assert!(states_match("deadbeef", "deadbeef"));
+        assert!(!states_match("deadbeef", "deadbee0"));
+        assert!(!states_match("deadbeef", "deadbeef0")); // length mismatch
+        assert!(!states_match("deadbeef", ""));
     }
 }
