@@ -109,20 +109,30 @@ pub async fn create_issue_impl(state: &AppState, input: CreateIssueInput) -> Res
         return Err("Issue title is required".to_string());
     }
 
-    sqlx::query("SELECT id FROM projects WHERE id = ?1")
+    let (default_workspace_strategy, git_backed) =
+        sqlx::query_as::<_, (String, bool)>(
+            "SELECT default_workspace_strategy, git_backed FROM projects WHERE id = ?1",
+        )
         .bind(input.project_id)
         .fetch_optional(&state.pool)
         .await
         .map_err(|err| format!("failed to check Project: {err}"))?
         .ok_or_else(|| format!("Project {} does not exist", input.project_id))?;
 
+    // New Issues inherit the Project's default Workspace Strategy. Validate it the
+    // same way the update paths do: git-only Strategies are gated in the backend,
+    // not just the UI (CONTEXT.md).
+    validate_workspace_strategy(&default_workspace_strategy)?;
+    ensure_strategy_allowed(&default_workspace_strategy, git_backed)?;
+
     let result = sqlx::query(
         "INSERT INTO issues (project_id, title, description, state_type, workspace_strategy)
-         VALUES (?1, ?2, ?3, 'todo', 'shared_checkout')",
+         VALUES (?1, ?2, ?3, 'todo', ?4)",
     )
     .bind(input.project_id)
     .bind(title)
     .bind(input.description.trim())
+    .bind(&default_workspace_strategy)
     .execute(&state.pool)
     .await
     .map_err(|err| format!("failed to create Issue: {err}"))?;
