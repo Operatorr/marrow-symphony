@@ -17,8 +17,9 @@ Tailwind (the stack already chosen for Marrow).
 
 A clickable Claude Design realization of this direction now exists — catalogued in
 [`reference-design.md`](./reference-design.md). Its `colors_and_type.css` is the canonical token set
-(Project colors **follow `--project-*`**); the **alert color is still being chosen** between Neon Cyan,
-an animated rainbow, and warm amber via 3 sample pages — see that doc's "Decisions & cleanup".
+(Project colors **follow `--project-*`**); the **alert color is warm amber `#f5a524`** (chosen
+2026-06-03; Neon Cyan and an animated rainbow remain as toggleable alternatives) — see that doc's
+"Decisions & cleanup" #1.
 
 ## Principles
 

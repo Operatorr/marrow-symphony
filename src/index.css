@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -90,9 +91,10 @@
   --status-running: #0c9f45;
   --status-running-glow: rgb(12 159 69 / 0.35);
   --status-running-bg: rgb(12 159 69 / 0.1);
-  --status-needs-input: #00a3c7;
-  --status-needs-input-glow: rgb(0 163 199 / 0.44);
-  --status-needs-input-bg: rgb(0 163 199 / 0.12);
+  /* Alert color (Needs Input) — committed default is warm amber (Slice 13). */
+  --status-needs-input: #b26b00;
+  --status-needs-input-glow: rgb(178 107 0 / 0.42);
+  --status-needs-input-bg: rgb(178 107 0 / 0.12);
   --status-idle: #5318c9;
   --status-idle-stroke: #7c3aed;
   --status-idle-glow: rgb(83 24 201 / 0.32);
@@ -101,7 +103,7 @@
   --status-exited-glow: rgb(220 38 38 / 0.3);
   --status-exited-bg: rgb(220 38 38 / 0.1);
 
-  --font-code: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --font-code: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   --radius: 8px;
   --r-4: 4px;
   --r-8: 8px;
@@ -110,13 +112,14 @@
   --shadow-glass-lifted: 0 16px 42px -20px rgb(0 0 0 / 0.28), 0 1px 0 0 var(--inset-highlight) inset;
   --shadow-working: 0 1px 2px 0 rgb(0 0 0 / 0.12);
   --shadow-needs-input: 0 0 0 1px var(--status-needs-input), 0 0 24px -4px var(--status-needs-input-glow);
-  --shadow-focus: 0 0 0 2px rgb(0 163 199 / 0.35);
+  /* Follows the active alert token (and theme) instead of a fixed hue. */
+  --shadow-focus: 0 0 0 2px color-mix(in srgb, var(--status-needs-input) 38%, transparent);
   --ease-out-expo: cubic-bezier(0.32, 0.72, 0, 1);
   --ease-toggle: cubic-bezier(0.4, 0, 0.2, 1);
   --dur-hover: 120ms;
   --dur-toggle: 220ms;
   --dur-page: 320ms;
-  --blur-glass: blur(22px) saturate(140%);
+  --blur-glass: blur(24px) saturate(140%);
   --blur-glass-reduced: blur(8px) saturate(120%);
   --sidebar-w: 240px;
   --topbar-h: 44px;
@@ -178,9 +181,10 @@
   --status-running: #79fa87;
   --status-running-glow: rgb(121 250 135 / 0.55);
   --status-running-bg: rgb(121 250 135 / 0.1);
-  --status-needs-input: #00d9ff;
-  --status-needs-input-glow: rgb(0 217 255 / 0.6);
-  --status-needs-input-bg: rgb(0 217 255 / 0.12);
+  /* Alert color (Needs Input) — committed default is warm amber (Slice 13). */
+  --status-needs-input: #f5a524;
+  --status-needs-input-glow: rgb(245 165 36 / 0.6);
+  --status-needs-input-bg: rgb(245 165 36 / 0.14);
   --status-idle: #5318c9;
   --status-idle-stroke: #8b5cf6;
   --status-idle-glow: rgb(83 24 201 / 0.55);
@@ -412,6 +416,32 @@
   flex: 1;
   overflow: auto;
   padding: 0 8px 10px;
+}
+
+.sidebar-group {
+  margin-top: 6px;
+}
+
+.sidebar-group-header {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 5px 6px;
+  color: var(--fg4);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.sidebar-group-header:hover {
+  color: var(--fg2);
 }
 
 .main-surface {
@@ -787,6 +817,20 @@ textarea.field {
   height: 360px;
 }
 
+.tile-preview {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: #0e0e10;
+  padding: 8px 9px;
+  color: var(--fg3);
+  font: 400 10.5px/14px var(--font-code);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .terminal-frame {
   display: flex;
   height: 100%;
@@ -901,6 +945,10 @@ textarea.field {
 .empty-hero {
   position: relative;
   z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   color: var(--fg2);
   text-align: center;
 }
@@ -943,7 +991,8 @@ textarea.field {
   cursor: pointer;
 }
 
-.session-tabs button.active {
+.session-tabs button.active,
+.runner-row.active {
   border-color: var(--status-needs-input);
   color: var(--fg1);
   box-shadow: var(--shadow-focus);
@@ -955,6 +1004,46 @@ textarea.field {
   padding: 7px 8px;
   color: var(--status-exited);
   font-size: 12px;
+}
+
+.degraded-pill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  padding: 2px 7px;
+  background: var(--status-exited-bg);
+  color: var(--status-exited);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.hook-panel {
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.04);
+  padding: 10px;
+}
+
+.hook-command {
+  overflow-x: auto;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 0.28);
+  padding: 7px 8px;
+  color: var(--fg2);
+  font: 500 10.5px/15px var(--font-code);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.token-hint {
+  display: inline-block;
+  border-radius: 5px;
+  background: rgb(255 255 255 / 0.06);
+  padding: 1px 5px;
+  color: var(--fg3);
+  font: 500 10.5px/15px var(--font-code);
 }
 
 .comment-row {
@@ -984,36 +1073,122 @@ textarea.field {
   font-family: var(--font-code);
 }
 
-.shader,
-.shader-fallback {
+.shader-canvas {
   pointer-events: none;
   position: absolute;
   inset: 0;
   z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-.shader {
-  background:
-    radial-gradient(circle at var(--shader-x) var(--shader-y), color-mix(in srgb, var(--project-6) 34%, transparent), transparent 26rem),
-    radial-gradient(circle at 18% 72%, color-mix(in srgb, var(--project-1) 24%, transparent), transparent 24rem),
-    radial-gradient(circle at 82% 28%, color-mix(in srgb, var(--project-3) 18%, transparent), transparent 22rem),
-    var(--bg-shell);
-  filter: saturate(130%);
-  transition: background-position 120ms var(--ease-toggle);
+/* ── Alert-color treatments (Slice 13). Default is amber (the base tokens);
+   .alert-cyan / .alert-rainbow are opt-in overrides applied to <html>. ── */
+.alert-cyan {
+  --status-needs-input: #00a3c7;
+  --status-needs-input-glow: rgb(0 163 199 / 0.44);
+  --status-needs-input-bg: rgb(0 163 199 / 0.12);
+}
+.dark.alert-cyan {
+  --status-needs-input: #00d9ff;
+  --status-needs-input-glow: rgb(0 217 255 / 0.6);
+  --status-needs-input-bg: rgb(0 217 255 / 0.12);
+}
+.alert-rainbow {
+  --status-needs-input: #c026d3;
+  --status-needs-input-glow: rgb(192 38 211 / 0.5);
+  --status-needs-input-bg: rgb(192 38 211 / 0.14);
+}
+.dark.alert-rainbow {
+  --status-needs-input: #e879f9;
+  --status-needs-input-glow: rgb(232 121 249 / 0.55);
+  --status-needs-input-bg: rgb(232 121 249 / 0.16);
+}
+/* The rainbow treatment hue-cycles the attention glows in addition to pulsing. */
+.alert-rainbow .attention-pip,
+.alert-rainbow .status-needs-input {
+  animation: shell-pulse 1.4s ease-in-out infinite, alert-rainbow-cycle 5s linear infinite;
+}
+.alert-rainbow .needs-pill {
+  animation: alert-rainbow-text 5s linear infinite;
 }
 
-.shader.subtle {
+@keyframes alert-rainbow-cycle {
+  0%   { background-color: #ff6b6b; box-shadow: 0 0 12px 1px rgb(255 107 107 / 0.6); }
+  25%  { background-color: #ffd23f; box-shadow: 0 0 12px 1px rgb(255 210 63 / 0.6); }
+  50%  { background-color: #6bf7a0; box-shadow: 0 0 12px 1px rgb(107 247 160 / 0.6); }
+  75%  { background-color: #4ea8ff; box-shadow: 0 0 12px 1px rgb(78 168 255 / 0.6); }
+  100% { background-color: #e879f9; box-shadow: 0 0 12px 1px rgb(232 121 249 / 0.6); }
+}
+@keyframes alert-rainbow-text {
+  0%   { color: #ff6b6b; }
+  25%  { color: #e0a800; }
+  50%  { color: #1aa86a; }
+  75%  { color: #4ea8ff; }
+  100% { color: #c026d3; }
+}
+
+/* ── Skeleton loaders (Slice 14) ── */
+.skeleton {
+  border-radius: 8px;
+  background: linear-gradient(
+    100deg,
+    var(--bg-glass-hover) 30%,
+    var(--bg-glass-strong) 50%,
+    var(--bg-glass-hover) 70%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.3s ease-in-out infinite;
+}
+.skeleton + .skeleton {
+  margin-top: 8px;
+}
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Inline query error + retry (Slice 14) ── */
+.query-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--status-exited) 40%, transparent);
+  border-radius: 8px;
+  background: var(--status-exited-bg);
+  padding: 9px 11px;
+  color: var(--status-exited);
+  font-size: 12px;
+}
+
+/* ── Linear link chips (Slice 2 / 9; display-only) ── */
+.linear-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 5px;
+  padding: 1px 5px;
+  background: color-mix(in srgb, #5e6ad2 22%, transparent);
+  color: color-mix(in srgb, #5e6ad2 70%, var(--fg1));
+  font: 600 10px/14px var(--font-code);
+  white-space: nowrap;
+}
+a.linear-chip:hover {
+  background: color-mix(in srgb, #5e6ad2 32%, transparent);
+}
+.linear-badge.offline {
   opacity: 0.55;
 }
 
-.shader-fallback {
-  background: var(--bg-shell);
-}
-
-.reduce-motion .shader,
+.reduce-motion .shader-canvas,
 .reduce-motion .attention-pip,
-.reduce-motion .status-needs-input {
-  animation: none;
+.reduce-motion .status-needs-input,
+.reduce-motion .needs-pill,
+.reduce-motion .skeleton {
+  /* !important so it always beats the two-class `.alert-rainbow .x` rules. */
+  animation: none !important;
 }
 
 @keyframes shell-pulse {
@@ -1030,13 +1205,22 @@ textarea.field {
 
 @media (prefers-reduced-motion: reduce) {
   :root {
+    /* Thin the glass blur, and lift glass opacity so surfaces still read
+       without the heavy backdrop blur (reference colors_and_type.css). */
     --blur-glass: var(--blur-glass-reduced);
+    --bg-glass: rgb(255 255 255 / 0.86);
   }
 
-  .shader,
+  .dark {
+    --bg-glass: rgb(20 20 22 / 0.85);
+  }
+
+  .shader-canvas,
   .attention-pip,
-  .status-needs-input {
-    animation: none;
+  .status-needs-input,
+  .needs-pill,
+  .skeleton {
+    animation: none !important;
   }
 }
 

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   BoardColumn,
+  ClaudeHookStatus,
   Group,
   Issue,
   IssueComment,
@@ -84,9 +85,23 @@ export function updateIssue(input: {
   stateType?: StateType;
   runnerOverrideId?: number | null;
   workspaceStrategy?: string;
+  linearKey?: string;
+  linearUrl?: string;
 }) {
   if (!isTauriRuntime()) return unavailable("Issue updates");
   return invoke<Issue>("update_issue", { input });
+}
+
+export function updateProject(input: {
+  projectId: number;
+  name?: string;
+  defaultRunnerId?: number;
+  defaultWorkspaceStrategy?: string;
+  linearKey?: string;
+  linearUrl?: string;
+}) {
+  if (!isTauriRuntime()) return unavailable("Project updates");
+  return invoke<Project>("update_project", { input });
 }
 
 export function transitionIssue(input: {
@@ -246,4 +261,26 @@ export function createIssueComment(input: {
 }) {
   if (!isTauriRuntime()) return unavailable("Issue comments");
   return invoke<IssueComment>("create_issue_comment", { input });
+}
+
+const NO_HOOK: ClaudeHookStatus = {
+  installed: false,
+  settingsPath: "~/.claude/settings.json",
+  settingsExists: false,
+  command: "marrow notify --needs-input",
+};
+
+export function claudeHookStatus() {
+  if (!isTauriRuntime()) return Promise.resolve(NO_HOOK);
+  return invoke<ClaudeHookStatus>("claude_hook_status");
+}
+
+export function installClaudeHook() {
+  if (!isTauriRuntime()) return unavailable("Installing the Claude hook");
+  return invoke<ClaudeHookStatus>("install_claude_hook");
+}
+
+export function uninstallClaudeHook() {
+  if (!isTauriRuntime()) return unavailable("Removing the Claude hook");
+  return invoke<ClaudeHookStatus>("uninstall_claude_hook");
 }

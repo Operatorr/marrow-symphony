@@ -10,6 +10,8 @@ export interface Project {
   defaultWorkspaceStrategy: string;
   color: string;
   colorIndex: number;
+  linearUrl: string | null;
+  linearKey: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -43,6 +45,8 @@ export interface Issue {
   runnerOverride: string | null;
   runnerOverrideId: number | null;
   workspaceStrategy: string;
+  linearUrl: string | null;
+  linearKey: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -114,6 +118,13 @@ export interface IssueComment {
   author: string;
   body: string;
   createdAt: string;
+}
+
+export interface ClaudeHookStatus {
+  installed: boolean;
+  settingsPath: string;
+  settingsExists: boolean;
+  command: string;
 }
 
 export type ViewMode = "board" | "cockpit" | "feed";

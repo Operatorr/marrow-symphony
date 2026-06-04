@@ -32,10 +32,10 @@ from a stored hex to a `--project-*` palette index (hex retained as fallback), a
 create.
 
 ### Acceptance criteria
-- [ ] The existing Sidebar/Board/Cockpit/Feed render with the reference tokens in **both** themes; the dark shell matches the reference mood.
-- [ ] `--project-1…6`, status tokens, Geist Mono, radii/shadow/blur/motion, and `--sidebar-w`/`--topbar-h` rails are all available as theme variables.
-- [ ] Projects render their accent from a palette index; existing Projects migrate without data loss.
-- [ ] The theme toggle still flips light/dark; `pnpm tauri dev` boots and the `ping` smoke check is green.
+- [x] The existing Sidebar/Board/Cockpit/Feed render with the reference tokens in **both** themes; the dark shell matches the reference mood.
+- [x] `--project-1…6`, status tokens, Geist Mono, radii/shadow/blur/motion, and `--sidebar-w`/`--topbar-h` rails are all available as theme variables.
+- [x] Projects render their accent from a palette index; existing Projects migrate without data loss.
+- [x] The theme toggle still flips light/dark; `pnpm tauri dev` boots and the `ping` smoke check is green.
 
 ### Blocked by
 None — can start immediately.
@@ -55,10 +55,10 @@ Selecting a Project sets the scope of the main view. Port the shared chrome atom
 attention pip, needs pill, project chip, icon button, kbd, logo) as shadcn/Tailwind components.
 
 ### Acceptance criteria
-- [ ] Topbar view switch changes the main view; global Needs-Input count reflects live Sessions.
-- [ ] Sidebar lists Projects with live/needs counts + non-git/Linear badges; Group filter and search narrow the list.
-- [ ] `⌘B` collapses/expands the sidebar (open or closed, nothing in between).
-- [ ] Selecting a Project scopes the main view; `list_groups` (and minimal create/assign on Add Project) backs the Group filter.
+- [x] Topbar view switch changes the main view; global Needs-Input count reflects live Sessions.
+- [x] Sidebar lists Projects with live/needs counts + non-git/Linear badges; Group filter and search narrow the list.
+- [x] `⌘B` collapses/expands the sidebar (open or closed, nothing in between).
+- [x] Selecting a Project scopes the main view; `list_groups` (and minimal create/assign on Add Project) backs the Group filter.
 
 ### Blocked by
 - Slice 1 (design tokens).
@@ -80,11 +80,11 @@ PTY reader and add a `get_session_scrollback` command so re-mounting the frame *
 scrollback** — and so Cockpit/Feed previews can render without a live attach (Slices 7, 8).
 
 ### Acceptance criteria
-- [ ] One terminal component renders at all three chrome densities, host-selected.
-- [ ] Kill works against the existing command; Restart/Resume controls are present.
-- [ ] The manual override flips a Session to Needs Input (and back) and updates the accent/glow live.
-- [ ] Status is rendered from the new status/glow tokens.
-- [ ] A per-Session ring buffer retains recent output; `get_session_scrollback` replays it on remount.
+- [x] One terminal component renders at all three chrome densities, host-selected.
+- [x] Kill works against the existing command; Restart/Resume controls are present.
+- [x] The manual override flips a Session to Needs Input (and back) and updates the accent/glow live.
+- [x] Status is rendered from the new status/glow tokens.
+- [x] A per-Session ring buffer retains recent output; `get_session_scrollback` replays it on remount.
 
 ### Blocked by
 - Slice 1 (design tokens).
@@ -103,10 +103,10 @@ entry, nulled on clear) to order the Feed oldest-waiting-first. Needs Input **cl
 acts** (`write_to_session` → Running).
 
 ### Acceptance criteria
-- [ ] A real `claude`/`codex` Session that emits an OSC/BEL notification flips to Needs Input automatically.
-- [ ] Typing into the terminal clears Needs Input back to Running.
-- [ ] `needs_input_since` is set on entry and cleared on resolution; it is queryable for Feed ordering.
-- [ ] Manual override (Slice 3) and auto-detection cooperate without flicker.
+- [x] A real `claude`/`codex` Session that emits an OSC/BEL notification flips to Needs Input automatically.
+- [x] Typing into the terminal clears Needs Input back to Running.
+- [x] `needs_input_since` is set on entry and cleared on resolution; it is queryable for Feed ordering.
+- [x] Manual override (Slice 3) and auto-detection cooperate without flicker.
 
 ### Blocked by
 - Slice 3 (shared terminal frame).
@@ -139,11 +139,11 @@ kinds (`claude`/`codex`), exposing the same read/comment/diff ops as an **MCP se
 follow-on; the CLI is the universal mechanism for any `kind`.
 
 ### Acceptance criteria
-- [ ] `marrow notify` flips the addressed Session to Needs Input and the UI reacts immediately.
-- [ ] The Claude hook installs only after explicit in-app consent and is purely additive (existing hooks merged); declining/removing leaves the global config untouched.
-- [ ] With `MARROW_SESSION_ID` / `MARROW_NOTIFY_SOCKET` absent, `marrow` exits cleanly with no effect.
-- [ ] `marrow issue read` prints the resolved Issue's task context; `marrow issue comment` persists a row to `issue_comments` tied to the Session.
-- [ ] The agent never receives any credential; all resolution happens inside Marrow over the socket.
+- [x] `marrow notify` flips the addressed Session to Needs Input and the UI reacts immediately.
+- [x] The Claude hook installs only after explicit in-app consent and is purely additive (existing hooks merged); declining/removing leaves the global config untouched.
+- [x] With `MARROW_SESSION_ID` / `MARROW_NOTIFY_SOCKET` absent, `marrow` exits cleanly with no effect.
+- [x] `marrow issue read` prints the resolved Issue's task context; `marrow issue comment` persists a row to `issue_comments` tied to the Session.
+- [x] The agent never receives any credential; all resolution happens inside Marrow over the socket.
 
 ### Blocked by
 - Slice 4 (Needs-Input status plumbing + socket/event). `marrow diff` reuses Slice 8's `workspace_diff`; surfacing comments uses the Issue page (Slice 9).
@@ -164,11 +164,11 @@ the Issue has no live Session**; `done`/`canceled` **offers** cleanup (kills liv
 confirm, never automatically); other transitions are state-only.
 
 ### Acceptance criteria
-- [ ] Both scopes render correctly; global pools Issues into canonical State Types, color-coded + badged.
-- [ ] Dragging a card persists its State Type via `transition_issue`; into `started` launches a Session iff none is live (no duplicates).
-- [ ] `done`/`canceled` prompts before any cleanup; declining leaves Sessions running.
-- [ ] Default `board_columns` are seeded on project create; `list_board_columns` and global `list_issues(null)` (with Project info) back the views.
-- [ ] Empty and non-git/degraded states render per the spec.
+- [x] Both scopes render correctly; global pools Issues into canonical State Types, color-coded + badged.
+- [x] Dragging a card persists its State Type via `transition_issue`; into `started` launches a Session iff none is live (no duplicates).
+- [x] `done`/`canceled` prompts before any cleanup; declining leaves Sessions running.
+- [x] Default `board_columns` are seeded on project create; `list_board_columns` and global `list_issues(null)` (with Project info) back the views.
+- [x] Empty and non-git/degraded states render per the spec.
 
 ### Blocked by
 - Slice 1 (tokens), Slice 2 (shell scope).
@@ -187,10 +187,10 @@ collapsing/reordering groups, and a tile click that **enlarges inline** with an 
 Feed** action.
 
 ### Acceptance criteria
-- [ ] Live Sessions are grouped by Project with accurate live/attention counts.
-- [ ] Needs-Input tiles glow and sort first within their group.
-- [ ] Status filter and group collapse/reorder work; the empty state ("Nothing running") renders.
-- [ ] Tile click enlarges inline; Open in Feed routes to the Feed focused on that Session.
+- [x] Live Sessions are grouped by Project with accurate live/attention counts.
+- [x] Needs-Input tiles glow and sort first within their group.
+- [x] Status filter and group collapse/reorder work; the empty state ("Nothing running") renders.
+- [x] Tile click enlarges inline; Open in Feed routes to the Feed focused on that Session.
 
 ### Blocked by
 - Slice 3 (terminal frame), Slice 4 (attention status/ordering).
@@ -211,10 +211,10 @@ excludes snoozed Sessions; `⌘↑/⌘↓` revisit. Inbox-zero is the celebrator
 minimal `snoozed_until` column (fixed default duration for now).
 
 ### Acceptance criteria
-- [ ] The Feed shows one Needs-Input Session, oldest-waiting first, excluding snoozed ones.
-- [ ] Acting (typing), Skip, and Snooze each advance to the next card; the queue count updates.
-- [ ] The context panel shows the task, branch, and a diff summary (or a clean degraded note on non-git).
-- [ ] Inbox-zero renders when nothing needs input.
+- [x] The Feed shows one Needs-Input Session, oldest-waiting first, excluding snoozed ones.
+- [x] Acting (typing), Skip, and Snooze each advance to the next card; the queue count updates.
+- [x] The context panel shows the task, branch, and a diff summary (or a clean degraded note on non-git).
+- [x] Inbox-zero renders when nothing needs input.
 
 ### Blocked by
 - Slice 3 (terminal frame), Slice 4 (`needs_input_since`).
@@ -235,11 +235,11 @@ first Session). Start / Stop / **+ New Session** supports **multiple Sessions pe
 PTYs in the shared checkout). Override Runner / Workspace Strategy (git-only options gated) / column.
 
 ### Acceptance criteria
-- [ ] Clicking a Board card opens the Issue page; back returns to the Board.
-- [ ] Editing the task persists to SQLite and rewrites `.marrow/issues/<id>.md`.
-- [ ] Start/Stop and **+ New Session** create multiple concurrent Sessions shown as tabs.
-- [ ] Runner / Strategy / column overrides work; git-only Strategy options are gated on non-git Projects.
-- [ ] Not-started, Running, and degraded states render per the spec.
+- [x] Clicking a Board card opens the Issue page; back returns to the Board.
+- [x] Editing the task persists to SQLite and rewrites `.marrow/issues/<id>.md`.
+- [x] Start/Stop and **+ New Session** create multiple concurrent Sessions shown as tabs.
+- [x] Runner / Strategy / column overrides work; git-only Strategy options are gated on non-git Projects.
+- [x] Not-started, Running, and degraded states render per the spec.
 
 ### Blocked by
 - Slice 3 (terminal frame), Slice 6 (Board card navigation + transition).
@@ -265,11 +265,11 @@ strings (user login shell) with **shell-escaped** `{{workspace}}` / `{{issueFile
 deleting the last Runner or a Project's default (reassign prompt).
 
 ### Acceptance criteria
-- [ ] Presets are seeded; a user can create/edit/delete custom Runners; `kind` is fixed once created.
-- [ ] The migration converts the string columns to FKs and backfills existing data without loss.
-- [ ] Starting a Session resolves the Runner and snapshots name/kind/command onto the Session.
-- [ ] Interpolated values are shell-escaped; the system env layer cannot be edited or shadowed by `env_json`.
-- [ ] Deleting a Runner used as a Project default is refused with a reassign prompt; the last Runner can't be deleted.
+- [x] Presets are seeded; a user can create/edit/delete custom Runners; `kind` is fixed once created.
+- [x] The migration converts the string columns to FKs and backfills existing data without loss.
+- [x] Starting a Session resolves the Runner and snapshots name/kind/command onto the Session.
+- [x] Interpolated values are shell-escaped; the system env layer cannot be edited or shadowed by `env_json`.
+- [x] Deleting a Runner used as a Project default is refused with a reassign prompt; the last Runner can't be deleted.
 
 ### Blocked by
 - Slice 2 (shell — the picker/editor surface).
@@ -288,9 +288,9 @@ Runner's `resume_cmd` with `{{resumeToken}}` filled, in the same Workspace, as a
 conversation under multi-session shared checkout.
 
 ### Acceptance criteria
-- [ ] A `kind`-specific regex scrapes the resume token from PTY output into `sessions.resume_token`.
-- [ ] Resume launches a new Session via `resume_cmd` with the captured token; Restart launches a fresh `launch_cmd`.
-- [ ] Resume is disabled/hidden when no token was captured; Restart is always available.
+- [x] A `kind`-specific regex scrapes the resume token from PTY output into `sessions.resume_token`.
+- [x] Resume launches a new Session via `resume_cmd` with the captured token; Restart launches a fresh `launch_cmd`.
+- [x] Resume is disabled/hidden when no token was captured; Restart is always available.
 
 ### Blocked by
 - Slice 10 (registry + snapshot columns), Slice 4 (shared PTY output scanning).
@@ -308,9 +308,9 @@ high-contrast). Add a first-class **reduce-motion / disable-shader** setting wit
 fallback (thinned glass blur).
 
 ### Acceptance criteria
-- [ ] The shader animates behind shell/empty/Feed-ambiance surfaces and is absent on working surfaces.
-- [ ] The reduce-motion/disable-shader toggle fully stops the shader; the app stays calm and usable with it off.
-- [ ] `prefers-reduced-motion` is respected by default.
+- [x] The shader animates behind shell/empty/Feed-ambiance surfaces and is absent on working surfaces.
+- [x] The reduce-motion/disable-shader toggle fully stops the shader; the app stays calm and usable with it off.
+- [x] `prefers-reduced-motion` is respected by default.
 
 ### Blocked by
 - Slice 1 (tokens), Slice 2 (shell placement).
@@ -328,8 +328,8 @@ choice can be made **by eye**. The Board card treatment is already fixed (rainbo
 column); this governs the alert color everywhere else.
 
 ### Acceptance criteria
-- [ ] Three toggleable alert-color samples exist on real attention surfaces (Cockpit/Feed/shell).
-- [ ] A human selects the alert color; the choice is recorded (decision-log/ADR note).
+- [x] Three toggleable alert-color samples exist on real attention surfaces (Cockpit/Feed/shell).
+- [x] A human selects the alert color; the choice is recorded (decision-log/ADR note).
 
 ### Blocked by
 - Slice 7 (Cockpit), Slice 8 (Feed) — surfaces to sample on.
@@ -347,10 +347,10 @@ offline (Linear-only impact) — across every surface. Run the manual verificati
 the full demo flow.
 
 ### Acceptance criteria
-- [ ] The chosen alert color is applied consistently across all non-Board attention surfaces.
-- [ ] Empty / loading / error / degraded / offline states render correctly on every surface.
-- [ ] The full demo flow (add Project → Issue → Board drag → Session → Cockpit/Feed → Issue page) works end-to-end.
-- [ ] `pnpm tauri dev` boots and the `ping` smoke check is green.
+- [x] The chosen alert color is applied consistently across all non-Board attention surfaces.
+- [x] Empty / loading / error / degraded / offline states render correctly on every surface.
+- [x] The full demo flow (add Project → Issue → Board drag → Session → Cockpit/Feed → Issue page) works end-to-end.
+- [x] `pnpm tauri dev` boots and the `ping` smoke check is green.
 
 ### Blocked by
 - Slice 13 (alert-color decision).

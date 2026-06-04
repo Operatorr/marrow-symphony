@@ -127,6 +127,7 @@ pub async fn start_session_impl(
         runner_env,
         &prepared.workspace_path,
         &prepared.issue_file_path,
+        state.notify_socket_path.as_deref().unwrap_or(""),
     ) {
         Ok(pid) => {
             sqlx::query("UPDATE sessions SET pid = ?1 WHERE id = ?2")
@@ -412,6 +413,7 @@ fn spawn_runner(
     runner_env: HashMap<String, String>,
     workspace_path: &Path,
     issue_file_path: &Path,
+    notify_socket: &str,
 ) -> Result<Option<u32>, String> {
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -425,13 +427,25 @@ fn spawn_runner(
 
     let mut command = shell_command(runner_command);
     command.cwd(workspace_path.as_os_str());
+    // Runner-supplied env first; the non-editable system layer is applied last so
+    // it cannot be shadowed (env_json already strips MARROW_*/TERM keys upstream).
     for (key, value) in runner_env {
         command.env(key, value);
     }
     command.env("MARROW_ISSUE_FILE", issue_file_path.as_os_str());
     command.env("MARROW_SESSION_ID", session_id.to_string());
-    command.env("MARROW_NOTIFY_SOCKET", "");
+    command.env("MARROW_NOTIFY_SOCKET", notify_socket);
     command.env("TERM", "xterm-256color");
+    // Put the `marrow` sidecar on PATH so the agent can call it by name.
+    if let Some(dir) = crate::sidecar::marrow_bin_dir() {
+        let mut entries = vec![dir];
+        entries.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        if let Ok(joined) = std::env::join_paths(entries) {
+            command.env("PATH", joined);
+        }
+    }
 
     let mut child = pair
         .slave
@@ -542,6 +556,10 @@ fn spawn_runner(
     let reader_tx = tx.clone();
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
+        // A short tail of the previous chunk is prepended only for *signal
+        // scanning* (never for emit/scrollback) so an OSC/BEL/resume marker that
+        // straddles a read boundary is still detected.
+        let mut carry = String::new();
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
@@ -556,8 +574,14 @@ fn spawn_runner(
                             data: data.clone(),
                         },
                     );
-                    let needs_input = detects_attention_signal(&data);
-                    let resume_token = capture_resume_token(&output_runner_kind, &data);
+                    let scan = if carry.is_empty() {
+                        data.clone()
+                    } else {
+                        format!("{carry}{data}")
+                    };
+                    carry = tail_chars(&scan, SCAN_CARRY_CHARS);
+                    let needs_input = detects_attention_signal(&scan);
+                    let resume_token = capture_resume_token(&output_runner_kind, &scan);
                     // `send` is synchronous and non-blocking, so it is safe to
                     // call from this blocking reader thread. An error means the
                     // consumer is gone, so there is nothing left to persist.
@@ -591,7 +615,7 @@ fn spawn_runner(
     Ok(pid)
 }
 
-async fn set_session_status_impl(
+pub(crate) async fn set_session_status_impl(
     app: &AppHandle,
     pool: &sqlx::SqlitePool,
     session_id: i64,
@@ -728,6 +752,19 @@ fn current_branch(workspace_path: &Path) -> Option<String> {
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Enough to cover the longest scanned marker (`claude --resume ` = 16 chars)
+/// plus a partial token, so a marker split across two PTY reads is still found.
+const SCAN_CARRY_CHARS: usize = 64;
+
+fn tail_chars(value: &str, n: usize) -> String {
+    let count = value.chars().count();
+    if count <= n {
+        value.to_string()
+    } else {
+        value.chars().skip(count - n).collect()
+    }
+}
+
 fn detects_attention_signal(data: &str) -> bool {
     data.contains('\u{0007}') || data.contains("\u{001b}]9;") || data.contains("\u{001b}]777;")
 }
@@ -740,18 +777,106 @@ fn capture_resume_token(kind: &str, data: &str) -> Option<String> {
     };
     for marker in markers {
         if let Some(start) = data.find(marker) {
-            let rest = &data[start + marker.len()..];
-            let token = rest
-                .split_whitespace()
-                .next()
-                .unwrap_or_default()
-                .trim_matches(|c: char| {
-                    matches!(c, '"' | '\'' | '`' | ',' | ';' | ')' | ']' | '}')
-                });
+            // Skip any whitespace between the marker and the token (the CLI may
+            // print extra spaces), matching the old split_whitespace behaviour.
+            let rest = data[start + marker.len()..].trim_start();
+            // Only capture once the token is terminated by whitespace in this
+            // scan window. An unterminated run may be a token split across PTY
+            // reads — the carry tail brings the remainder on the next read, so
+            // waiting avoids persisting a truncated token (COALESCE keeps the
+            // first non-null value).
+            let Some(end) = rest.find(char::is_whitespace) else {
+                continue;
+            };
+            let token = rest[..end].trim_matches(|c: char| {
+                matches!(c, '"' | '\'' | '`' | ',' | ';' | ')' | ']' | '}')
+            });
             if !token.is_empty() {
                 return Some(token.to_string());
             }
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        capture_resume_token, detects_attention_signal, interpolate_runner_command, shell_escape,
+        tail_chars, SCAN_CARRY_CHARS,
+    };
+
+    #[test]
+    fn attention_signal_detects_bel_and_osc() {
+        assert!(detects_attention_signal("done\u{0007}"));
+        assert!(detects_attention_signal("\u{001b}]9;Marrow needs you\u{0007}"));
+        assert!(detects_attention_signal("\u{001b}]777;notify;title;body\u{0007}"));
+    }
+
+    #[test]
+    fn attention_signal_absent_in_plain_output() {
+        assert!(!detects_attention_signal("just regular agent output\n"));
+        assert!(!detects_attention_signal(""));
+    }
+
+    #[test]
+    fn captures_claude_resume_token() {
+        assert_eq!(
+            capture_resume_token("claude", "Resume later with: claude --resume abc-123\n"),
+            Some("abc-123".to_string())
+        );
+    }
+
+    #[test]
+    fn captures_codex_resume_token() {
+        assert_eq!(
+            capture_resume_token("codex", "run `codex resume 7f3a` to continue"),
+            Some("7f3a".to_string())
+        );
+    }
+
+    #[test]
+    fn no_resume_token_in_plain_output() {
+        assert_eq!(capture_resume_token("claude", "nothing to see here"), None);
+    }
+
+    #[test]
+    fn captures_token_with_extra_whitespace_after_marker() {
+        assert_eq!(
+            capture_resume_token("claude", "run: claude --resume    abc-9 to continue\n"),
+            Some("abc-9".to_string())
+        );
+    }
+
+    #[test]
+    fn carry_lets_split_marker_be_detected() {
+        // BEL split is trivial, but a resume marker split across two reads only
+        // resolves when the tail of read N is prepended to read N+1.
+        let chunk_a = "Resume later with: claude --resume ab";
+        let chunk_b = "c-123\n";
+        assert_eq!(capture_resume_token("claude", chunk_a), None);
+        let carry = tail_chars(chunk_a, SCAN_CARRY_CHARS);
+        let scan = format!("{carry}{chunk_b}");
+        assert_eq!(capture_resume_token("claude", &scan), Some("abc-123".to_string()));
+    }
+
+    #[test]
+    fn tail_chars_bounds_the_carry() {
+        assert_eq!(tail_chars("abcdef", 3), "def");
+        assert_eq!(tail_chars("ab", 5), "ab");
+    }
+
+    #[test]
+    fn interpolation_is_shell_escaped() {
+        let cmd = interpolate_runner_command(
+            "claude --resume {{resumeToken}}",
+            "/tmp/ws",
+            "/tmp/ws/.marrow/issues/1.md",
+            "main",
+            "tok'en",
+        );
+        assert!(cmd.contains(&shell_escape("tok'en")));
+        // A single quote in the token must not break out of the quoting.
+        assert!(cmd.contains("'tok'\"'\"'en'"));
+    }
 }

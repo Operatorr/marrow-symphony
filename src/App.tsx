@@ -1,10 +1,22 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
+  ArrowDown,
+  ArrowUp,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Clock,
   Code2,
@@ -18,21 +30,27 @@ import {
   MessageSquare,
   Moon,
   PanelLeft,
+  Palette,
   Play,
   Plus,
   RefreshCw,
   Search,
   Settings,
+  ShieldCheck,
   Sparkles,
   Square,
   Sun,
   X,
 } from "lucide-react";
 import {
+  claudeHookStatus,
   createIssue,
+  createIssueComment,
   createProject,
   createRunner,
   deleteRunner,
+  getSessionScrollback,
+  installClaudeHook,
   isTauriRuntime,
   killSession,
   listBoardColumns,
@@ -48,14 +66,17 @@ import {
   snoozeSession,
   startSession,
   transitionIssue,
+  uninstallClaudeHook,
   updateIssue,
+  updateProject,
   updateRunner,
   workspaceDiff,
 } from "@/api";
 import { Button } from "@/components/ui/button";
+import { Shader } from "@/components/Shader";
 import { TerminalPane } from "@/components/TerminalPane";
 import { cn } from "@/lib/utils";
-import { useUiStore } from "@/store";
+import { useUiStore, type AlertTreatment } from "@/store";
 import type {
   BoardColumn,
   Group,
@@ -66,6 +87,7 @@ import type {
   SessionSummary,
   StateType,
   ViewMode,
+  WorkspaceDiff,
 } from "@/types";
 
 const viewLabels: Record<ViewMode, string> = {
@@ -94,8 +116,10 @@ function App() {
     openedIssueId,
     focusedSessionId,
     view,
+    alertTreatment,
     toggleDark,
     toggleReduceMotion,
+    cycleAlertTreatment,
     toggleSidebar,
     selectProject,
     setBoardScope,
@@ -104,8 +128,8 @@ function App() {
     setView,
   } = useUiStore();
   const [projectSearch, setProjectSearch] = useState("");
-  const [groupFilter, setGroupFilter] = useState<number | "all">("all");
   const [runnerPanelOpen, setRunnerPanelOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement | null>(null);
 
   const pingQuery = useQuery({ queryKey: ["ping"], queryFn: ping });
   const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: listProjects });
@@ -150,6 +174,10 @@ function App() {
         event.preventDefault();
         toggleSidebar();
       }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        searchRef.current?.focus();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -184,10 +212,11 @@ function App() {
 
   return (
     <div className="app-shell">
-      <Shader disabled={reduceMotion} />
+      <Shader disabled={reduceMotion} dark={dark} />
       <TopBar
         dark={dark}
         reduceMotion={reduceMotion}
+        alertTreatment={alertTreatment}
         sidebarOpen={sidebarOpen}
         view={view}
         needsCount={activeNeeds.length}
@@ -195,6 +224,7 @@ function App() {
         runnerPanelOpen={runnerPanelOpen}
         onToggleDark={toggleDark}
         onToggleReduceMotion={toggleReduceMotion}
+        onCycleAlert={cycleAlertTreatment}
         onToggleSidebar={toggleSidebar}
         onSetView={(nextView) => {
           setView(nextView);
@@ -213,12 +243,13 @@ function App() {
             projects={projects}
             groups={groups}
             selectedProjectId={selectedProjectId}
-            groupFilter={groupFilter}
             search={projectSearch}
             stats={projectStats}
             loading={projectsQuery.isPending}
-            onGroupFilter={setGroupFilter}
+            error={projectsQuery.isError ? projectsQuery.error : null}
+            searchRef={searchRef}
             onSearch={setProjectSearch}
+            onRetry={() => void projectsQuery.refetch()}
             onSelectProject={(projectId) => {
               selectProject(projectId);
               setView("board");
@@ -237,6 +268,8 @@ function App() {
               runners={runners}
               projects={projects}
               loading={runnersQuery.isPending}
+              error={runnersQuery.isError ? runnersQuery.error : null}
+              onRetry={() => void runnersQuery.refetch()}
               onChanged={() => {
                 void queryClient.invalidateQueries({ queryKey: ["runners"] });
                 invalidateWork();
@@ -278,6 +311,17 @@ function App() {
                   selectedProjectId !== null &&
                   boardColumnsQuery.isPending)
               }
+              error={
+                issuesQuery.isError
+                  ? issuesQuery.error
+                  : boardColumnsQuery.isError
+                    ? boardColumnsQuery.error
+                    : null
+              }
+              onRetry={() => {
+                void issuesQuery.refetch();
+                void boardColumnsQuery.refetch();
+              }}
               onScopeChange={setBoardScope}
               onIssueCreated={invalidateWork}
               onIssueOpen={(issueId) => openIssue(issueId)}
@@ -290,6 +334,8 @@ function App() {
               sessions={scopedSessions}
               focusedSessionId={focusedSessionId}
               loading={allSessionsQuery.isPending}
+              error={allSessionsQuery.isError ? allSessionsQuery.error : null}
+              onRetry={() => void allSessionsQuery.refetch()}
               onFocusSession={focusSession}
               onOpenFeed={(sessionId) => {
                 focusSession(sessionId);
@@ -303,6 +349,8 @@ function App() {
             <FeedView
               sessions={scopedSessions}
               issues={allIssues}
+              reduceMotion={reduceMotion}
+              dark={dark}
               focusedSessionId={focusedSessionId}
               onFocusSession={focusSession}
               onOpenCockpit={(sessionId) => {
@@ -321,6 +369,7 @@ function App() {
 function TopBar({
   dark,
   reduceMotion,
+  alertTreatment,
   sidebarOpen,
   view,
   needsCount,
@@ -328,6 +377,7 @@ function TopBar({
   runnerPanelOpen,
   onToggleDark,
   onToggleReduceMotion,
+  onCycleAlert,
   onToggleSidebar,
   onSetView,
   onRefresh,
@@ -335,6 +385,7 @@ function TopBar({
 }: {
   dark: boolean;
   reduceMotion: boolean;
+  alertTreatment: AlertTreatment;
   sidebarOpen: boolean;
   view: ViewMode;
   needsCount: number;
@@ -342,6 +393,7 @@ function TopBar({
   runnerPanelOpen: boolean;
   onToggleDark: () => void;
   onToggleReduceMotion: () => void;
+  onCycleAlert: () => void;
   onToggleSidebar: () => void;
   onSetView: (view: ViewMode) => void;
   onRefresh: () => void;
@@ -411,6 +463,15 @@ function TopBar({
         <Button
           variant="ghost"
           size="icon-sm"
+          onClick={onCycleAlert}
+          aria-label="Cycle alert color"
+          title={`Alert color: ${alertTreatment} (click to cycle)`}
+        >
+          <Palette />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
           onClick={onToggleRunnerPanel}
           aria-label="Runner settings"
           title="Runner settings"
@@ -427,7 +488,13 @@ function TopBar({
         >
           {dark ? <Sun /> : <Moon />}
         </Button>
-        <span className="linear-badge">Linear</span>
+        <span
+          className="linear-badge offline"
+          title="Linear is not connected — links are display-only in this build"
+        >
+          <span className="status-dot status-exited" />
+          Linear
+        </span>
       </div>
     </header>
   );
@@ -437,58 +504,71 @@ function Sidebar({
   projects,
   groups,
   selectedProjectId,
-  groupFilter,
   search,
   stats,
   loading,
-  onGroupFilter,
+  error,
+  searchRef,
   onSearch,
+  onRetry,
   onSelectProject,
   onProjectCreated,
 }: {
   projects: Project[];
   groups: Group[];
   selectedProjectId: number | null;
-  groupFilter: number | "all";
   search: string;
   stats: Map<number, { live: number; needs: number }>;
   loading: boolean;
-  onGroupFilter: (groupId: number | "all") => void;
+  error: unknown;
+  searchRef: RefObject<HTMLInputElement | null>;
   onSearch: (value: string) => void;
+  onRetry: () => void;
   onSelectProject: (projectId: number | null) => void;
   onProjectCreated: (project: Project) => void;
 }) {
-  const filtered = projects.filter((project) => {
-    const matchesGroup = groupFilter === "all" || project.groupId === groupFilter;
-    const matchesSearch =
-      search.trim().length === 0 ||
-      project.name.toLowerCase().includes(search.trim().toLowerCase());
-    return matchesGroup && matchesSearch;
-  });
+  const [collapsed, setCollapsed] = useState<Set<number | "ungrouped">>(new Set());
+  const trimmed = search.trim().toLowerCase();
+  const filtered = projects.filter(
+    (project) => trimmed.length === 0 || project.name.toLowerCase().includes(trimmed),
+  );
+
+  // Group projects into accordion buckets: each Group in order, then Ungrouped.
+  const buckets: Array<{ key: number | "ungrouped"; name: string; projects: Project[] }> = [];
+  for (const group of groups) {
+    const groupProjects = filtered.filter((project) => project.groupId === group.id);
+    if (groupProjects.length > 0) buckets.push({ key: group.id, name: group.name, projects: groupProjects });
+  }
+  const ungrouped = filtered.filter((project) => project.groupId === null);
+  if (ungrouped.length > 0) buckets.push({ key: "ungrouped", name: "Ungrouped", projects: ungrouped });
+
+  const aggregate = (group: Project[]) =>
+    group.reduce(
+      (acc, project) => {
+        const counts = stats.get(project.id) ?? { live: 0, needs: 0 };
+        return { live: acc.live + counts.live, needs: acc.needs + counts.needs };
+      },
+      { live: 0, needs: 0 },
+    );
+
+  const toggleGroup = (key: number | "ungrouped") =>
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   return (
     <aside className="sidebar">
       <div className="space-y-3 p-3">
-        <select
-          value={groupFilter}
-          onChange={(event) =>
-            onGroupFilter(event.target.value === "all" ? "all" : Number(event.target.value))
-          }
-          className="field h-8"
-        >
-          <option value="all">All Groups</option>
-          {groups.map((group) => (
-            <option key={group.id} value={group.id}>
-              {group.name}
-            </option>
-          ))}
-        </select>
         <label className="search-field">
           <Search className="size-3.5" />
           <input
+            ref={searchRef}
             value={search}
             onChange={(event) => onSearch(event.target.value)}
-            placeholder="Projects"
+            placeholder="Search Projects"
           />
         </label>
         <AddProjectForm groups={groups} onCreated={onProjectCreated} />
@@ -508,35 +588,75 @@ function Sidebar({
           <Layers3 className="size-3.5 text-[var(--fg4)]" />
         </button>
 
-        {loading && <div className="px-2 py-3 text-[12px] text-[var(--fg3)]">Loading</div>}
-        {!loading && filtered.length === 0 && (
+        {error ? (
+          <div className="px-1 py-2">
+            <QueryError error={error} onRetry={onRetry} label="Couldn't load Projects" />
+          </div>
+        ) : loading ? (
+          <div className="px-1 py-2">
+            <SkeletonRows rows={4} h={46} />
+          </div>
+        ) : buckets.length === 0 ? (
           <div className="empty-panel mx-1 my-2">No Projects</div>
+        ) : (
+          buckets.map((bucket) => {
+            const isCollapsed = collapsed.has(bucket.key);
+            const agg = aggregate(bucket.projects);
+            return (
+              <section key={bucket.key} className="sidebar-group">
+                <button
+                  type="button"
+                  className="sidebar-group-header"
+                  onClick={() => toggleGroup(bucket.key)}
+                >
+                  <span className="flex min-w-0 items-center gap-1">
+                    {isCollapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+                    <span className="truncate">{bucket.name}</span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    {agg.live > 0 && <span className="count-pill">{agg.live}</span>}
+                    {agg.needs > 0 && <AttentionPip />}
+                  </span>
+                </button>
+                {!isCollapsed &&
+                  bucket.projects.map((project) => {
+                    const selected = selectedProjectId === project.id;
+                    const counts = stats.get(project.id) ?? { live: 0, needs: 0 };
+                    return (
+                      <button
+                        key={project.id}
+                        type="button"
+                        onClick={() => onSelectProject(project.id)}
+                        className={cn(
+                          "project-row",
+                          selected && "selected",
+                          counts.needs > 0 && "attention",
+                        )}
+                      >
+                        <ProjectChip project={project} />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-1.5">
+                            <span className="block truncate font-medium">{project.name}</span>
+                            <LinearChip linearKey={project.linearKey} linearUrl={project.linearUrl} />
+                          </span>
+                          <span className="block truncate text-[11px] text-[var(--fg4)]">
+                            {project.gitBacked ? "git" : "non-git"}
+                          </span>
+                        </span>
+                        <span className="flex items-center gap-1">
+                          {!project.gitBacked && (
+                            <AlertCircle className="size-3.5 text-[var(--status-exited)]" />
+                          )}
+                          {counts.live > 0 && <span className="count-pill">{counts.live}</span>}
+                          {counts.needs > 0 && <AttentionPip />}
+                        </span>
+                      </button>
+                    );
+                  })}
+              </section>
+            );
+          })
         )}
-        {filtered.map((project) => {
-          const selected = selectedProjectId === project.id;
-          const counts = stats.get(project.id) ?? { live: 0, needs: 0 };
-          return (
-            <button
-              key={project.id}
-              type="button"
-              onClick={() => onSelectProject(project.id)}
-              className={cn("project-row", selected && "selected", counts.needs > 0 && "attention")}
-            >
-              <ProjectChip project={project} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium">{project.name}</span>
-                <span className="block truncate text-[11px] text-[var(--fg4)]">
-                  {project.groupName ?? "Ungrouped"} · {project.gitBacked ? "git" : "non-git"}
-                </span>
-              </span>
-              <span className="flex items-center gap-1">
-                {!project.gitBacked && <AlertCircle className="size-3.5 text-[var(--status-exited)]" />}
-                {counts.live > 0 && <span className="count-pill">{counts.live}</span>}
-                {counts.needs > 0 && <AttentionPip />}
-              </span>
-            </button>
-          );
-        })}
       </div>
     </aside>
   );
@@ -549,8 +669,6 @@ function AddProjectForm({
   groups: Group[];
   onCreated: (project: Project) => void;
 }) {
-  const [path, setPath] = useState("");
-  const [name, setName] = useState("");
   const [groupId, setGroupId] = useState<number | "none" | "new">("none");
   const [groupName, setGroupName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -558,8 +676,6 @@ function AddProjectForm({
   const mutation = useMutation({
     mutationFn: createProject,
     onSuccess: (project) => {
-      setPath("");
-      setName("");
       setGroupName("");
       setGroupId("none");
       setError(null);
@@ -568,47 +684,21 @@ function AddProjectForm({
     onError: (err) => setError(String(err)),
   });
 
-  const chooseFolder = async () => {
+  const browse = async () => {
     setError(null);
     const selected = await openProjectDirectory();
     if (!selected) return;
-    setPath(selected);
-    if (!name.trim()) {
-      const segments = selected.split(/[\\/]/).filter(Boolean);
-      setName(segments[segments.length - 1] ?? "");
-    }
-  };
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
+    // The folder is the Project; the backend derives the name from its basename.
     mutation.mutate({
-      path,
-      name: name.trim() || undefined,
+      path: selected,
       groupId: typeof groupId === "number" ? groupId : null,
-      groupName: groupId === "new" ? groupName : null,
+      groupName: groupId === "new" ? groupName.trim() || null : null,
     });
   };
 
   return (
-    <form className="tool-panel space-y-2" onSubmit={submit}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="label-caps">Add Project</div>
-        <Button type="button" size="icon-xs" variant="ghost" onClick={chooseFolder} title="Choose folder">
-          <FolderPlus />
-        </Button>
-      </div>
-      <input
-        value={name}
-        onChange={(event) => setName(event.target.value)}
-        placeholder="Name"
-        className="field"
-      />
-      <input
-        value={path}
-        onChange={(event) => setPath(event.target.value)}
-        placeholder="Folder path"
-        className="field"
-      />
+    <div className="tool-panel space-y-2">
+      <div className="label-caps">Add Project</div>
       <select
         value={groupId}
         onChange={(event) =>
@@ -621,6 +711,7 @@ function AddProjectForm({
           )
         }
         className="field"
+        aria-label="Group for the new Project"
       >
         <option value="none">No Group</option>
         {groups.map((group) => (
@@ -628,7 +719,7 @@ function AddProjectForm({
             {group.name}
           </option>
         ))}
-        <option value="new">New Group</option>
+        <option value="new">New Group…</option>
       </select>
       {groupId === "new" && (
         <input
@@ -638,12 +729,12 @@ function AddProjectForm({
           className="field"
         />
       )}
-      {error && <div className="text-[12px] text-destructive">{error}</div>}
-      <Button type="submit" className="w-full" disabled={!path.trim() || mutation.isPending}>
-        <Plus />
-        Add
+      <Button type="button" className="w-full" onClick={() => void browse()} disabled={mutation.isPending}>
+        <FolderPlus />
+        {mutation.isPending ? "Adding…" : "Browse for folder…"}
       </Button>
-    </form>
+      {error && <div className="text-[12px] text-destructive">{error}</div>}
+    </div>
   );
 }
 
@@ -655,6 +746,8 @@ function BoardView({
   issues,
   allSessions,
   loading,
+  error,
+  onRetry,
   onScopeChange,
   onIssueCreated,
   onIssueOpen,
@@ -667,6 +760,8 @@ function BoardView({
   issues: Issue[];
   allSessions: SessionSummary[];
   loading: boolean;
+  error: unknown;
+  onRetry: () => void;
   onScopeChange: (scope: "project" | "global") => void;
   onIssueCreated: () => void;
   onIssueOpen: (issueId: number) => void;
@@ -734,8 +829,23 @@ function BoardView({
         />
       </div>
 
-      {loading && <div className="empty-panel">Loading Board</div>}
-      {!loading && issues.length === 0 && <div className="empty-panel">No Issues</div>}
+      {error ? (
+        <QueryError error={error} onRetry={onRetry} label="Couldn't load the Board" />
+      ) : loading ? (
+        <div className="board-grid">
+          {columns.map((column) => (
+            <section key={column.stateType} className="board-column">
+              <div className="board-column-header">
+                <span>{column.label}</span>
+              </div>
+              <SkeletonRows rows={2} h={64} />
+            </section>
+          ))}
+        </div>
+      ) : issues.length === 0 ? (
+        <div className="empty-panel">No Issues yet — add one above.</div>
+      ) : null}
+      {!error && !loading && (
       <div className="board-grid">
         {columns.map((column) => {
           const columnIssues = issues.filter((issue) => issue.stateType === column.stateType);
@@ -766,6 +876,7 @@ function BoardView({
           );
         })}
       </div>
+      )}
       {transitionMutation.isError && (
         <div className="mt-3 text-[12px] text-destructive">{String(transitionMutation.error)}</div>
       )}
@@ -899,10 +1010,24 @@ function IssueCard({
   );
 }
 
+function SessionPreview({ session }: { session: SessionSummary }) {
+  // A lightweight, throttled static preview from the persisted ring buffer —
+  // not a live xterm — so a fleet of tiles stays cheap (Slice 7).
+  const scrollbackQuery = useQuery({
+    queryKey: ["scrollback", session.id],
+    queryFn: () => getSessionScrollback(session.id),
+    refetchInterval: session.status === "exited" ? false : 4000,
+  });
+  const text = useMemo(() => previewText(scrollbackQuery.data ?? ""), [scrollbackQuery.data]);
+  return <pre className="tile-preview">{text || "…"}</pre>;
+}
+
 function CockpitView({
   sessions,
   focusedSessionId,
   loading,
+  error,
+  onRetry,
   onFocusSession,
   onOpenFeed,
   onChanged,
@@ -910,18 +1035,41 @@ function CockpitView({
   sessions: SessionSummary[];
   focusedSessionId: number | null;
   loading: boolean;
+  error: unknown;
+  onRetry: () => void;
   onFocusSession: (sessionId: number | null) => void;
   onOpenFeed: (sessionId: number) => void;
   onChanged: () => void;
 }) {
   const [statusFilter, setStatusFilter] = useState<SessionSummary["status"] | "all">("all");
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+  const [order, setOrder] = useState<number[]>(() => loadCockpitOrder());
   const liveSessions = sessions.filter((session) => session.status !== "exited");
   const filtered =
     statusFilter === "all"
       ? liveSessions
       : liveSessions.filter((session) => session.status === statusFilter);
   const groups = useMemo(() => groupSessionsByProject(filtered), [filtered]);
+
+  const orderedGroups = useMemo(() => {
+    const rank = (projectId: number) => {
+      const index = order.indexOf(projectId);
+      return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+    };
+    return [...groups].sort(
+      (a, b) => rank(a.projectId) - rank(b.projectId) || a.projectName.localeCompare(b.projectName),
+    );
+  }, [groups, order]);
+
+  const moveGroup = (projectId: number, direction: -1 | 1) => {
+    const ids = orderedGroups.map((group) => group.projectId);
+    const from = ids.indexOf(projectId);
+    const to = from + direction;
+    if (from === -1 || to < 0 || to >= ids.length) return;
+    [ids[from], ids[to]] = [ids[to], ids[from]];
+    setOrder(ids);
+    saveCockpitOrder(ids);
+  };
 
   return (
     <section className="view-surface">
@@ -944,42 +1092,70 @@ function CockpitView({
         </select>
       </div>
 
-      {loading && <div className="empty-panel">Loading Sessions</div>}
-      {!loading && liveSessions.length === 0 && <div className="empty-panel">Nothing running</div>}
+      {error ? (
+        <QueryError error={error} onRetry={onRetry} label="Couldn't load Sessions" />
+      ) : loading ? (
+        <SkeletonRows rows={3} h={150} />
+      ) : liveSessions.length === 0 ? (
+        <div className="empty-panel">Nothing running</div>
+      ) : null}
 
       <div className="space-y-5">
-        {groups.map((group) => {
+        {orderedGroups.map((group, index) => {
           const isCollapsed = collapsed.has(group.projectId);
           const attention = group.sessions.filter((session) => session.status === "needs_input").length;
           return (
             <section key={group.projectId} className="fleet-group">
-              <button
-                type="button"
-                className="fleet-group-header"
-                onClick={() =>
-                  setCollapsed((current) => {
-                    const next = new Set(current);
-                    if (next.has(group.projectId)) next.delete(group.projectId);
-                    else next.add(group.projectId);
-                    return next;
-                  })
-                }
-              >
-                <span>{group.projectName}</span>
+              <div className="fleet-group-header">
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-2 border-0 bg-transparent text-left"
+                  onClick={() =>
+                    setCollapsed((current) => {
+                      const next = new Set(current);
+                      if (next.has(group.projectId)) next.delete(group.projectId);
+                      else next.add(group.projectId);
+                      return next;
+                    })
+                  }
+                >
+                  {isCollapsed ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}
+                  <span className="truncate">{group.projectName}</span>
+                </button>
                 <span className="flex items-center gap-2">
                   {group.sessions.length} live
                   {attention > 0 && <span className="needs-pill small">{attention} need input</span>}
-                  {isCollapsed ? <ChevronDown className="size-4" /> : <ChevronUp className="size-4" />}
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    title="Move group up"
+                    aria-label="Move group up"
+                    disabled={index === 0}
+                    onClick={() => moveGroup(group.projectId, -1)}
+                  >
+                    <ArrowUp />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    title="Move group down"
+                    aria-label="Move group down"
+                    disabled={index === orderedGroups.length - 1}
+                    onClick={() => moveGroup(group.projectId, 1)}
+                  >
+                    <ArrowDown />
+                  </Button>
                 </span>
-              </button>
+              </div>
               {!isCollapsed && (
                 <div className="cockpit-grid">
                   {sortSessions(group.sessions).map((session) => {
                     const expanded = focusedSessionId === session.id;
+                    const needsInput = session.status === "needs_input";
                     return (
                       <article
                         key={session.id}
-                        className={cn("session-tile", session.status === "needs_input" && "attention", expanded && "expanded")}
+                        className={cn("session-tile", needsInput && "attention", expanded && "expanded")}
                         style={projectStyle(session.projectColorIndex, session.projectColor)}
                       >
                         <div className="mb-2 flex items-center justify-between gap-3">
@@ -1000,8 +1176,9 @@ function CockpitView({
                             <Button
                               variant="ghost"
                               size="icon-xs"
-                              title="Open in Feed"
+                              title={needsInput ? "Open in Feed" : "Only Needs-Input Sessions enter the Feed"}
                               aria-label="Open in Feed"
+                              disabled={!needsInput}
                               onClick={() => onOpenFeed(session.id)}
                             >
                               <Maximize2 />
@@ -1018,12 +1195,11 @@ function CockpitView({
                           </div>
                         </div>
                         <div className={cn("tile-terminal", expanded && "expanded")}>
-                          <TerminalPane
-                            session={session}
-                            density={expanded ? "full" : "minimal"}
-                            readOnly={!expanded}
-                            onSessionChanged={onChanged}
-                          />
+                          {expanded ? (
+                            <TerminalPane session={session} density="full" onSessionChanged={onChanged} />
+                          ) : (
+                            <SessionPreview session={session} />
+                          )}
                         </div>
                       </article>
                     );
@@ -1041,6 +1217,8 @@ function CockpitView({
 function FeedView({
   sessions,
   issues,
+  reduceMotion,
+  dark,
   focusedSessionId,
   onFocusSession,
   onOpenCockpit,
@@ -1048,6 +1226,8 @@ function FeedView({
 }: {
   sessions: SessionSummary[];
   issues: Issue[];
+  reduceMotion: boolean;
+  dark: boolean;
   focusedSessionId: number | null;
   onFocusSession: (sessionId: number | null) => void;
   onOpenCockpit: (sessionId: number) => void;
@@ -1064,6 +1244,12 @@ function FeedView({
     enabled: Boolean(session),
   });
 
+  const advance = useCallback(() => {
+    onFocusSession(null);
+    setCursor((value) => Math.min(Math.max(queue.length - 2, 0), value));
+    onChanged();
+  }, [onFocusSession, onChanged, queue.length]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!event.metaKey && !event.ctrlKey) return;
@@ -1075,10 +1261,14 @@ function FeedView({
         event.preventDefault();
         setCursor((value) => Math.max(0, value - 1));
       }
+      if (event.key === "Enter" && session) {
+        event.preventDefault();
+        void setSessionStatus(session.id, "idle").then(advance);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [queue.length]);
+  }, [queue.length, session, advance]);
 
   useEffect(() => {
     if (focusedSessionId !== null && !queue.some((candidate) => candidate.id === focusedSessionId)) {
@@ -1089,21 +1279,20 @@ function FeedView({
   if (!session) {
     return (
       <section className="feed-empty">
-        <Shader disabled={false} subtle />
+        <Shader disabled={reduceMotion} subtle dark={dark} />
         <div className="empty-hero">
           <Inbox className="size-10" />
           <h2>Inbox zero</h2>
           <p>No Session needs input.</p>
+          <p className="mt-1 text-[12px] text-[var(--fg4)]">
+            Agents that need you will appear here, oldest first.
+          </p>
         </div>
       </section>
     );
   }
 
-  const advance = () => {
-    onFocusSession(null);
-    setCursor((value) => Math.min(Math.max(queue.length - 2, 0), value));
-    onChanged();
-  };
+  const upNext = queue.filter((candidate) => candidate.id !== session.id).length;
 
   return (
     <section className="feed-surface">
@@ -1146,35 +1335,40 @@ function FeedView({
           </section>
           <section>
             <div className="label-caps">Diff</div>
-            <pre className="diff-block">{diffQuery.data?.summary ?? "Loading diff"}</pre>
-            {diffQuery.data && (
-              <div className="mt-2 flex gap-2 font-mono text-[11px]">
-                <span>{diffQuery.data.changedFiles} files</span>
-                <span className="text-[var(--status-running)]">+{diffQuery.data.insertions}</span>
-                <span className="text-[var(--status-exited)]">-{diffQuery.data.deletions}</span>
-              </div>
-            )}
+            <DiffPanel
+              data={diffQuery.data}
+              isPending={diffQuery.isPending}
+              isError={diffQuery.isError}
+              error={diffQuery.error}
+              onRetry={() => void diffQuery.refetch()}
+            />
           </section>
-          <div className="feed-actions">
-            <Button variant="outline" onClick={() => setCursor((value) => Math.min(queue.length - 1, value + 1))}>
-              <ChevronDown />
-              Skip
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => void snoozeSession(session.id).then(advance)}
-            >
-              <Clock />
-              Snooze
-            </Button>
-            <Button variant="outline" onClick={() => onOpenCockpit(session.id)}>
-              <Gauge />
-              Cockpit
-            </Button>
-            <Button onClick={() => void setSessionStatus(session.id, "idle").then(advance)}>
-              <Check />
-              Done
-            </Button>
+          <div className="mt-auto space-y-2">
+            <div className="flex items-center justify-between text-[11px] text-[var(--fg4)]">
+              <span>{upNext > 0 ? `${upNext} more waiting` : "Last in queue"}</span>
+              <span className="flex items-center gap-1">
+                <Kbd>⌘↵</Kbd> done · <Kbd>⌘↑</Kbd>
+                <Kbd>⌘↓</Kbd> revisit
+              </span>
+            </div>
+            <div className="feed-actions">
+              <Button variant="outline" onClick={() => setCursor((value) => Math.min(queue.length - 1, value + 1))}>
+                <ChevronDown />
+                Skip
+              </Button>
+              <Button variant="outline" onClick={() => void snoozeSession(session.id).then(advance)}>
+                <Clock />
+                Snooze
+              </Button>
+              <Button variant="outline" onClick={() => onOpenCockpit(session.id)}>
+                <Gauge />
+                Open in Cockpit
+              </Button>
+              <Button onClick={() => void setSessionStatus(session.id, "idle").then(advance)}>
+                <Check />
+                Done
+              </Button>
+            </div>
           </div>
         </aside>
       </div>
@@ -1205,6 +1399,9 @@ function IssuePage({
     issue?.runnerOverrideId ?? "default",
   );
   const [workspaceStrategy, setWorkspaceStrategy] = useState(issue?.workspaceStrategy ?? "shared_checkout");
+  const [linearKey, setLinearKey] = useState(issue?.linearKey ?? "");
+  const [linearUrl, setLinearUrl] = useState(issue?.linearUrl ?? "");
+  const [commentDraft, setCommentDraft] = useState("");
 
   useEffect(() => {
     setActiveSessionId((current) => current ?? sessions[0]?.id ?? null);
@@ -1217,6 +1414,8 @@ function IssuePage({
     setStateType(issue.stateType);
     setRunnerOverrideId(issue.runnerOverrideId ?? "default");
     setWorkspaceStrategy(issue.workspaceStrategy);
+    setLinearKey(issue.linearKey ?? "");
+    setLinearUrl(issue.linearUrl ?? "");
   }, [issue]);
 
   const activeSession =
@@ -1232,6 +1431,11 @@ function IssuePage({
     queryFn: () => listIssueComments(issue?.id as number),
     enabled: Boolean(issue),
   });
+  const boardColumnsQuery = useQuery({
+    queryKey: ["board-columns", issue?.projectId],
+    queryFn: () => listBoardColumns(issue?.projectId as number),
+    enabled: Boolean(issue),
+  });
 
   const saveMutation = useMutation({
     mutationFn: updateIssue,
@@ -1240,6 +1444,14 @@ function IssuePage({
   const startMutation = useMutation({
     mutationFn: () => startSession(issue?.id as number),
     onSuccess: onChanged,
+  });
+  const commentMutation = useMutation({
+    mutationFn: (body: string) =>
+      createIssueComment({ issueId: issue?.id as number, body, author: "you" }),
+    onSuccess: () => {
+      setCommentDraft("");
+      void commentsQuery.refetch();
+    },
   });
 
   if (!issue) {
@@ -1252,6 +1464,16 @@ function IssuePage({
 
   const liveSessions = sessions.filter((session) => session.status !== "exited");
   const gitBacked = project?.gitBacked ?? true;
+  const latestSession = sessions.reduce<SessionSummary | null>(
+    (latest, session) => (latest === null || session.id > latest.id ? session : latest),
+    null,
+  );
+  const crashed = latestSession?.status === "exited" && (latestSession.exitCode ?? 0) !== 0;
+  const degraded = !gitBacked || crashed;
+  const columnLabel =
+    boardColumnsQuery.data?.find((column) => column.stateType === stateType)?.label ??
+    canonicalColumns.find((column) => column.stateType === stateType)?.label ??
+    stateType;
 
   return (
     <section className="issue-page">
@@ -1264,8 +1486,17 @@ function IssuePage({
           <div className="flex min-w-0 items-center gap-2">
             <ProjectChip projectLike={issue} />
             <h2 className="truncate">{issue.title}</h2>
+            <LinearChip linearKey={issue.linearKey} linearUrl={issue.linearUrl} />
+            {degraded && (
+              <span className="degraded-pill" title={crashed ? "A Session exited with an error" : "Non-git Workspace (degraded)"}>
+                <AlertCircle className="size-3" />
+                Degraded
+              </span>
+            )}
           </div>
-          <p>{issue.projectName} · {stateType}</p>
+          <p>
+            {issue.projectName} · {columnLabel} · {stateType}
+          </p>
         </div>
         <Button
           onClick={() => startMutation.mutate()}
@@ -1373,6 +1604,22 @@ function IssuePage({
               </option>
             </select>
             {!gitBacked && <div className="degraded-note">Git-only Workspace Strategy options are unavailable.</div>}
+            <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-2">
+              <input
+                value={linearKey}
+                onChange={(event) => setLinearKey(event.target.value)}
+                placeholder="LIN-123"
+                className="field font-mono"
+                aria-label="Linear key"
+              />
+              <input
+                value={linearUrl}
+                onChange={(event) => setLinearUrl(event.target.value)}
+                placeholder="Linear URL (display only)"
+                className="field"
+                aria-label="Linear URL"
+              />
+            </div>
             <Button
               onClick={() =>
                 saveMutation.mutate({
@@ -1382,6 +1629,8 @@ function IssuePage({
                   stateType,
                   runnerOverrideId: runnerOverrideId === "default" ? null : runnerOverrideId,
                   workspaceStrategy,
+                  linearKey,
+                  linearUrl,
                 })
               }
               disabled={saveMutation.isPending}
@@ -1406,20 +1655,56 @@ function IssuePage({
 
           <section className="tool-panel space-y-2">
             <div className="label-caps">Diff</div>
-            <pre className="diff-block">{diffQuery.data?.summary ?? "Loading diff"}</pre>
+            <DiffPanel
+              data={diffQuery.data}
+              isPending={diffQuery.isPending}
+              isError={diffQuery.isError}
+              error={diffQuery.error}
+              onRetry={() => void diffQuery.refetch()}
+            />
           </section>
 
           <section className="tool-panel space-y-2">
             <div className="label-caps">Comments</div>
-            {(commentsQuery.data ?? []).length === 0 && (
-              <div className="text-[12px] text-[var(--fg4)]">No comments</div>
+            <form
+              className="flex gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (commentDraft.trim()) commentMutation.mutate(commentDraft.trim());
+              }}
+            >
+              <input
+                value={commentDraft}
+                onChange={(event) => setCommentDraft(event.target.value)}
+                placeholder="Add a comment…"
+                className="field"
+              />
+              <Button type="submit" size="sm" disabled={!commentDraft.trim() || commentMutation.isPending}>
+                <MessageSquare />
+                Post
+              </Button>
+            </form>
+            {commentsQuery.isError ? (
+              <QueryError
+                error={commentsQuery.error}
+                onRetry={() => void commentsQuery.refetch()}
+                label="Couldn't load comments"
+              />
+            ) : commentsQuery.isPending ? (
+              <SkeletonRows rows={2} h={28} />
+            ) : (commentsQuery.data ?? []).length === 0 ? (
+              <div className="text-[12px] text-[var(--fg4)]">No comments yet.</div>
+            ) : (
+              (commentsQuery.data ?? []).slice(0, 8).map((comment) => (
+                <div key={comment.id} className="comment-row">
+                  <MessageSquare className="size-3.5" />
+                  <span className="min-w-0">
+                    <span className="mr-1.5 font-medium text-[var(--fg2)]">{comment.author}</span>
+                    {comment.body}
+                  </span>
+                </div>
+              ))
             )}
-            {(commentsQuery.data ?? []).slice(0, 5).map((comment) => (
-              <div key={comment.id} className="comment-row">
-                <MessageSquare className="size-3.5" />
-                <span>{comment.body}</span>
-              </div>
-            ))}
           </section>
         </aside>
       </div>
@@ -1431,12 +1716,16 @@ function RunnerPanel({
   runners,
   projects,
   loading,
+  error: loadError,
+  onRetry,
   onChanged,
   onClose,
 }: {
   runners: Runner[];
   projects: Project[];
   loading: boolean;
+  error: unknown;
+  onRetry: () => void;
   onChanged: () => void;
   onClose: () => void;
 }) {
@@ -1447,6 +1736,8 @@ function RunnerPanel({
   const [resumeCmd, setResumeCmd] = useState("");
   const [envJson, setEnvJson] = useState("{}");
   const [error, setError] = useState<string | null>(null);
+  const [reassignTo, setReassignTo] = useState<number | "">("");
+  const [deleting, setDeleting] = useState(false);
 
   const reset = () => {
     setEditing(null);
@@ -1456,18 +1747,13 @@ function RunnerPanel({
     setResumeCmd("");
     setEnvJson("{}");
     setError(null);
+    setReassignTo("");
   };
 
   const saveMutation = useMutation({
     mutationFn: () =>
       editing
-        ? updateRunner({
-            runnerId: editing.id,
-            name,
-            launchCmd,
-            resumeCmd,
-            envJson,
-          })
+        ? updateRunner({ runnerId: editing.id, name, launchCmd, resumeCmd, envJson })
         : createRunner({ kind, name, launchCmd, resumeCmd, envJson }),
     onSuccess: () => {
       reset();
@@ -1477,6 +1763,37 @@ function RunnerPanel({
   });
 
   const usedAsDefault = new Set(projects.map((project) => project.defaultRunnerId).filter(Boolean));
+  const affected = editing ? projects.filter((project) => project.defaultRunnerId === editing.id) : [];
+  const otherRunners = runners.filter((runner) => runner.id !== editing?.id);
+  const isLastRunner = runners.length <= 1;
+
+  // Reassign affected Projects' default Runner (server enforces ON DELETE
+  // RESTRICT) before deleting one that is in use, instead of just surfacing the
+  // raw refusal.
+  const handleDelete = async () => {
+    if (!editing) return;
+    setError(null);
+    setDeleting(true);
+    try {
+      if (affected.length > 0) {
+        const target = reassignTo === "" ? otherRunners[0]?.id : reassignTo;
+        if (!target) {
+          setError("Add another Runner before deleting this default.");
+          return;
+        }
+        for (const project of affected) {
+          await updateProject({ projectId: project.id, defaultRunnerId: target });
+        }
+      }
+      await deleteRunner(editing.id);
+      reset();
+      onChanged();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <aside className="runner-panel">
@@ -1490,28 +1807,35 @@ function RunnerPanel({
         </Button>
       </div>
 
-      {loading && <div className="empty-panel">Loading Runners</div>}
-      <div className="space-y-2">
-        {runners.map((runner) => (
-          <button
-            key={runner.id}
-            type="button"
-            className="runner-row"
-            onClick={() => {
-              setEditing(runner);
-              setKind(runner.kind);
-              setName(runner.name);
-              setLaunchCmd(runner.launchCmd);
-              setResumeCmd(runner.resumeCmd);
-              setEnvJson(runner.envJson);
-            }}
-          >
-            <span className="runner-kind">{runner.kind}</span>
-            <span className="min-w-0 flex-1 truncate">{runner.name}</span>
-            {usedAsDefault.has(runner.id) && <span className="count-pill">default</span>}
-          </button>
-        ))}
-      </div>
+      {loadError ? (
+        <QueryError error={loadError} onRetry={onRetry} label="Couldn't load Runners" />
+      ) : loading ? (
+        <SkeletonRows rows={3} h={34} />
+      ) : (
+        <div className="space-y-2">
+          {runners.map((runner) => (
+            <button
+              key={runner.id}
+              type="button"
+              className={cn("runner-row", editing?.id === runner.id && "active")}
+              onClick={() => {
+                setEditing(runner);
+                setKind(runner.kind);
+                setName(runner.name);
+                setLaunchCmd(runner.launchCmd);
+                setResumeCmd(runner.resumeCmd);
+                setEnvJson(runner.envJson);
+                setReassignTo("");
+                setError(null);
+              }}
+            >
+              <span className="runner-kind">{runner.kind}</span>
+              <span className="min-w-0 flex-1 truncate">{runner.name}</span>
+              {usedAsDefault.has(runner.id) && <span className="count-pill">default</span>}
+            </button>
+          ))}
+        </div>
+      )}
 
       <form
         className="mt-4 space-y-2"
@@ -1526,6 +1850,7 @@ function RunnerPanel({
           onChange={(event) => setKind(event.target.value as Runner["kind"])}
           className="field"
           disabled={Boolean(editing)}
+          title={editing ? "kind is immutable once a Runner is created" : undefined}
         >
           <option value="claude">claude</option>
           <option value="codex">codex</option>
@@ -1548,9 +1873,17 @@ function RunnerPanel({
           value={envJson}
           onChange={(event) => setEnvJson(event.target.value)}
           className="field min-h-20 font-mono"
+          placeholder="Env JSON (MARROW_*/TERM are reserved)"
         />
+        <div className="flex flex-wrap gap-1.5">
+          {["{{workspace}}", "{{issueFile}}", "{{branch}}", "{{resumeToken}}"].map((token) => (
+            <span key={token} className="token-hint" title="Shell-escaped before launch">
+              {token}
+            </span>
+          ))}
+        </div>
         {error && <div className="text-[12px] text-destructive">{error}</div>}
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button type="submit" disabled={!name.trim() || !launchCmd.trim() || saveMutation.isPending}>
             <Check />
             Save
@@ -1564,21 +1897,99 @@ function RunnerPanel({
             <Button
               type="button"
               variant="destructive"
-              onClick={() =>
-                void deleteRunner(editing.id)
-                  .then(() => {
-                    reset();
-                    onChanged();
-                  })
-                  .catch((err) => setError(String(err)))
-              }
+              onClick={() => void handleDelete()}
+              disabled={deleting || isLastRunner}
+              title={isLastRunner ? "Can't delete the last Runner" : undefined}
             >
               Delete
             </Button>
           )}
         </div>
+        {editing && affected.length > 0 && (
+          <div className="degraded-note space-y-2">
+            <div>
+              Default Runner for {affected.length} Project{affected.length > 1 ? "s" : ""}:{" "}
+              {affected.map((project) => project.name).join(", ")}. Reassign before deleting:
+            </div>
+            <select
+              value={reassignTo}
+              onChange={(event) => setReassignTo(event.target.value === "" ? "" : Number(event.target.value))}
+              className="field"
+            >
+              <option value="">{otherRunners[0] ? `Reassign to ${otherRunners[0].name}` : "No other Runner"}</option>
+              {otherRunners.map((runner) => (
+                <option key={runner.id} value={runner.id}>
+                  Reassign to {runner.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </form>
+
+      <ClaudeHookManager />
     </aside>
+  );
+}
+
+function ClaudeHookManager() {
+  const statusQuery = useQuery({ queryKey: ["claude-hook"], queryFn: claudeHookStatus });
+  const [error, setError] = useState<string | null>(null);
+  const install = useMutation({
+    mutationFn: installClaudeHook,
+    onSuccess: () => {
+      setError(null);
+      void statusQuery.refetch();
+    },
+    onError: (err) => setError(String(err)),
+  });
+  const remove = useMutation({
+    mutationFn: uninstallClaudeHook,
+    onSuccess: () => {
+      setError(null);
+      void statusQuery.refetch();
+    },
+    onError: (err) => setError(String(err)),
+  });
+  const status = statusQuery.data;
+
+  return (
+    <section className="hook-panel mt-4 space-y-2">
+      <div className="flex items-center gap-2">
+        <ShieldCheck className="size-3.5 text-[var(--status-running)]" />
+        <div className="label-caps">Claude attention hook</div>
+        {status?.installed && <span className="count-pill">installed</span>}
+      </div>
+      <p className="text-[12px] text-[var(--fg3)]">
+        Optionally add an additive <code className="token-hint">Stop</code> +{" "}
+        <code className="token-hint">Notification</code> hook to your global Claude config so Claude
+        Sessions auto-signal Needs Input. Nothing is written until you click Install; removing it
+        leaves the rest of your config untouched.
+      </p>
+      {status && (
+        <div className="truncate text-[11px] text-[var(--fg4)]" title={status.settingsPath}>
+          {status.settingsPath}
+        </div>
+      )}
+      {status && <pre className="hook-command">{status.command}</pre>}
+      {error && <div className="text-[12px] text-destructive">{error}</div>}
+      <div className="flex gap-2">
+        {status?.installed ? (
+          <Button variant="outline" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}>
+            Remove hook
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            onClick={() => install.mutate()}
+            disabled={install.isPending || statusQuery.isPending}
+          >
+            <ShieldCheck />
+            Install hook
+          </Button>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -1643,29 +2054,88 @@ function SessionStatusPill({ status }: { status: SessionSummary["status"] }) {
   );
 }
 
-function Shader({ disabled, subtle = false }: { disabled: boolean; subtle?: boolean }) {
-  const [pos, setPos] = useState({ x: 50, y: 30 });
-  useEffect(() => {
-    if (disabled) return undefined;
-    const onPointerMove = (event: PointerEvent) => {
-      setPos({
-        x: (event.clientX / window.innerWidth) * 100,
-        y: (event.clientY / window.innerHeight) * 100,
-      });
-    };
-    window.addEventListener("pointermove", onPointerMove);
-    return () => window.removeEventListener("pointermove", onPointerMove);
-  }, [disabled]);
-  if (disabled) return <div className="shader-fallback" />;
+function Skeleton({ h = 14, w = "100%" }: { h?: number; w?: number | string }) {
+  return <div className="skeleton" style={{ height: h, width: w } as CSSProperties} aria-hidden />;
+}
+
+function SkeletonRows({ rows = 3, h = 44 }: { rows?: number; h?: number }) {
   return (
-    <div
-      className={cn("shader", subtle && "subtle")}
-      style={{
-        "--shader-x": `${pos.x}%`,
-        "--shader-y": `${pos.y}%`,
-      } as CSSProperties}
-    />
+    <div className="space-y-2" aria-busy="true" aria-label="Loading">
+      {Array.from({ length: rows }).map((_, index) => (
+        <Skeleton key={index} h={h} />
+      ))}
+    </div>
   );
+}
+
+function QueryError({
+  error,
+  onRetry,
+  label = "Couldn't load",
+}: {
+  error: unknown;
+  onRetry: () => void;
+  label?: string;
+}) {
+  return (
+    <div className="query-error" role="alert">
+      <span className="flex min-w-0 items-center gap-1.5">
+        <AlertCircle className="size-3.5 shrink-0" />
+        <span className="truncate">
+          {label}: {String((error as Error)?.message ?? error)}
+        </span>
+      </span>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        <RefreshCw className="size-3.5" />
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+function DiffPanel({
+  data,
+  isPending,
+  isError,
+  error,
+  onRetry,
+}: {
+  data?: WorkspaceDiff;
+  isPending: boolean;
+  isError: boolean;
+  error: unknown;
+  onRetry: () => void;
+}) {
+  if (isError) return <QueryError error={error} onRetry={onRetry} label="Couldn't load diff" />;
+  if (isPending) return <Skeleton h={72} />;
+  if (!data) return null;
+  if (!data.gitBacked) {
+    return <div className="degraded-note">Not a git Workspace — diff is unavailable.</div>;
+  }
+  return (
+    <>
+      <pre className="diff-block">{data.summary}</pre>
+      <div className="mt-2 flex gap-2 font-mono text-[11px]">
+        <span>{data.changedFiles} files</span>
+        <span className="text-[var(--status-running)]">+{data.insertions}</span>
+        <span className="text-[var(--status-exited)]">-{data.deletions}</span>
+      </div>
+    </>
+  );
+}
+
+/** Compact one-line representation of a Linear key as a (display-only) chip. */
+function LinearChip({ linearKey, linearUrl }: { linearKey: string | null; linearUrl: string | null }) {
+  if (!linearKey && !linearUrl) return null;
+  const label = linearKey ?? "Linear";
+  if (linearUrl) {
+    return (
+      <a className="linear-chip" href={linearUrl} target="_blank" rel="noreferrer" title={linearUrl}>
+        {label}
+      </a>
+    );
+  }
+  return <span className="linear-chip">{label}</span>;
 }
 
 function normalizeColumns(columns?: BoardColumn[]) {
@@ -1718,6 +2188,38 @@ function sortSessions(sessions: SessionSummary[]) {
     if (aNeeds !== bNeeds) return aNeeds - bNeeds;
     return Date.parse(a.needsInputSince ?? a.startedAt) - Date.parse(b.needsInputSince ?? b.startedAt);
   });
+}
+
+const COCKPIT_ORDER_KEY = "marrow:cockpit-order";
+
+function loadCockpitOrder(): number[] {
+  try {
+    const raw = localStorage.getItem(COCKPIT_ORDER_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(parsed) ? parsed.filter((value): value is number => typeof value === "number") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCockpitOrder(order: number[]) {
+  try {
+    localStorage.setItem(COCKPIT_ORDER_KEY, JSON.stringify(order));
+  } catch {
+    // localStorage may be unavailable; ordering is a nicety, not load-bearing.
+  }
+}
+
+/** Strip ANSI/control noise from raw PTY scrollback and keep the last lines. */
+function previewText(raw: string): string {
+  const clean = raw
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "") // OSC sequences
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "") // CSI sequences
+    .replace(/\u001b[@-Z\\-_]/g, "") // other escape sequences
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ""); // stray control bytes (keep \n, \t)
+  const lines = clean.split("\n").map((line) => line.replace(/\s+$/g, ""));
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+  return lines.slice(-14).join("\n");
 }
 
 function sessionNeedsInput(session: SessionSummary) {

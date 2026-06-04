@@ -3,7 +3,7 @@ use crate::models::{
     CreateRunnerInput, DeleteRunnerInput, Group, Issue, IssueComment, IssueCommentsInput,
     ListBoardColumnsInput, ListIssuesInput, ListSessionsInput, Project, Runner, SessionSummary,
     StartSessionInput, TransitionIssueInput, TransitionIssueResult, UpdateIssueInput,
-    UpdateRunnerInput, WorkspaceDiff, WorkspaceDiffInput,
+    UpdateProjectInput, UpdateRunnerInput, WorkspaceDiff, WorkspaceDiffInput,
 };
 use crate::state::AppState;
 use crate::workspace::prepare_workspace;
@@ -152,6 +152,11 @@ pub async fn update_issue_impl(state: &AppState, input: UpdateIssueInput) -> Res
     let workspace_strategy = input.workspace_strategy.unwrap_or(existing.workspace_strategy);
     validate_workspace_strategy(&workspace_strategy)?;
 
+    let (project_path, git_backed) = project_path_and_git(&state.pool, existing.project_id).await?;
+    // Git-only Strategies are gated in the backend, not just the UI: a non-git
+    // Project can only ever run the Shared checkout strategy (CONTEXT.md).
+    ensure_strategy_allowed(&workspace_strategy, git_backed)?;
+
     let runner_override_id = input
         .runner_override_id
         .unwrap_or(existing.runner_override_id);
@@ -160,11 +165,23 @@ pub async fn update_issue_impl(state: &AppState, input: UpdateIssueInput) -> Res
         None => None,
     };
 
+    // Display-only Linear link fields (sync deferred): an explicit empty string
+    // clears the field, `None` leaves it untouched.
+    let linear_url = match input.linear_url {
+        Some(value) => nullable_text(&value),
+        None => existing.linear_url.clone(),
+    };
+    let linear_key = match input.linear_key {
+        Some(value) => nullable_text(&value),
+        None => existing.linear_key.clone(),
+    };
+
     sqlx::query(
         "UPDATE issues
          SET title = ?1, description = ?2, state_type = ?3, runner_override = ?4,
-             runner_override_id = ?5, workspace_strategy = ?6, updated_at = datetime('now')
-         WHERE id = ?7",
+             runner_override_id = ?5, workspace_strategy = ?6, linear_url = ?7,
+             linear_key = ?8, updated_at = datetime('now')
+         WHERE id = ?9",
     )
     .bind(title)
     .bind(description)
@@ -172,13 +189,81 @@ pub async fn update_issue_impl(state: &AppState, input: UpdateIssueInput) -> Res
     .bind(runner_override_name)
     .bind(runner_override_id)
     .bind(workspace_strategy)
+    .bind(linear_url)
+    .bind(linear_key)
     .bind(input.issue_id)
     .execute(&state.pool)
     .await
     .map_err(|err| format!("failed to update Issue: {err}"))?;
 
-    prepare_workspace(&state.pool, input.issue_id).await?;
+    // Re-materialize `.marrow/issues/<id>.md` whenever the Workspace dir exists
+    // (always true for shared checkout), so edits land even before the first
+    // Session. If the Project folder is missing, skip rather than failing the
+    // metadata update — the file only matters once a Session runs there.
+    if Path::new(&project_path).is_dir() {
+        prepare_workspace(&state.pool, input.issue_id).await?;
+    }
     get_issue(&state.pool, input.issue_id).await
+}
+
+pub async fn update_project_impl(
+    state: &AppState,
+    input: UpdateProjectInput,
+) -> Result<Project, String> {
+    let existing = get_project(&state.pool, input.project_id).await?;
+
+    let name = input
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&existing.name)
+        .to_string();
+
+    let default_workspace_strategy = input
+        .default_workspace_strategy
+        .unwrap_or(existing.default_workspace_strategy);
+    validate_workspace_strategy(&default_workspace_strategy)?;
+    ensure_strategy_allowed(&default_workspace_strategy, existing.git_backed)?;
+
+    // Reassigning the default Runner is how a Project frees a Runner that is
+    // about to be deleted (ON DELETE RESTRICT is enforced app-side here).
+    let default_runner_id = match input.default_runner_id {
+        Some(id) => id,
+        None => existing
+            .default_runner_id
+            .ok_or_else(|| "Project has no default Runner".to_string())?,
+    };
+    let default_runner_name = get_runner(&state.pool, default_runner_id).await?.name;
+
+    let linear_url = match input.linear_url {
+        Some(value) => nullable_text(&value),
+        None => existing.linear_url.clone(),
+    };
+    let linear_key = match input.linear_key {
+        Some(value) => nullable_text(&value),
+        None => existing.linear_key.clone(),
+    };
+
+    sqlx::query(
+        "UPDATE projects
+         SET name = ?1, default_runner_id = ?2, default_runner = ?3,
+             default_workspace_strategy = ?4, linear_url = ?5, linear_key = ?6,
+             updated_at = datetime('now')
+         WHERE id = ?7",
+    )
+    .bind(name)
+    .bind(default_runner_id)
+    .bind(default_runner_name)
+    .bind(default_workspace_strategy)
+    .bind(linear_url)
+    .bind(linear_key)
+    .bind(input.project_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|err| format!("failed to update Project: {err}"))?;
+
+    get_project(&state.pool, input.project_id).await
 }
 
 pub async fn list_issues_impl(
@@ -552,6 +637,14 @@ pub async fn update_issue(
 }
 
 #[tauri::command]
+pub async fn update_project(
+    state: State<'_, AppState>,
+    input: UpdateProjectInput,
+) -> Result<Project, String> {
+    update_project_impl(&state, input).await
+}
+
+#[tauri::command]
 pub async fn transition_issue(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -772,6 +865,39 @@ fn validate_workspace_strategy(strategy: &str) -> Result<(), String> {
     }
 }
 
+/// Worktree and Branch-in-place require a git repo; a non-git Project is limited
+/// to the Shared checkout strategy (CONTEXT.md). Enforced server-side so the
+/// gating is not merely a UI affordance.
+fn ensure_strategy_allowed(strategy: &str, git_backed: bool) -> Result<(), String> {
+    if !git_backed && matches!(strategy, "worktree" | "branch_in_place") {
+        return Err(format!(
+            "Workspace Strategy `{strategy}` requires a git-backed Project"
+        ));
+    }
+    Ok(())
+}
+
+/// Trim, treating an empty string as a cleared (NULL) value.
+fn nullable_text(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+async fn project_path_and_git(
+    pool: &sqlx::SqlitePool,
+    project_id: i64,
+) -> Result<(String, bool), String> {
+    sqlx::query_as::<_, (String, bool)>("SELECT path, git_backed FROM projects WHERE id = ?1")
+        .bind(project_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|err| format!("failed to load Project {project_id}: {err}"))
+}
+
 fn validate_runner_kind(kind: &str) -> Result<(), String> {
     match kind {
         "claude" | "codex" | "generic" => Ok(()),
@@ -899,6 +1025,7 @@ const PROJECT_SELECT_ALL: &str = "SELECT p.id, p.group_id, g.name AS group_name,
        COALESCE(r.name, p.default_runner) AS default_runner,
        p.default_runner_id,
        p.default_workspace_strategy, p.color, p.color_index,
+       p.linear_url, p.linear_key,
        p.created_at, p.updated_at
 FROM projects p
 LEFT JOIN groups g ON g.id = p.group_id
@@ -910,6 +1037,7 @@ const PROJECT_SELECT_BY_ID: &str = "SELECT p.id, p.group_id, g.name AS group_nam
        COALESCE(r.name, p.default_runner) AS default_runner,
        p.default_runner_id,
        p.default_workspace_strategy, p.color, p.color_index,
+       p.linear_url, p.linear_key,
        p.created_at, p.updated_at
 FROM projects p
 LEFT JOIN groups g ON g.id = p.group_id
@@ -920,7 +1048,8 @@ const ISSUE_SELECT_ALL: &str = "SELECT i.id, i.project_id,
        p.name AS project_name, p.color AS project_color, p.color_index AS project_color_index,
        i.title, i.description, i.state_type,
        COALESCE(ro.name, i.runner_override) AS runner_override,
-       i.runner_override_id, i.workspace_strategy, i.created_at, i.updated_at
+       i.runner_override_id, i.workspace_strategy, i.linear_url, i.linear_key,
+       i.created_at, i.updated_at
 FROM issues i
 JOIN projects p ON p.id = i.project_id
 LEFT JOIN runners ro ON ro.id = i.runner_override_id
@@ -940,7 +1069,8 @@ const ISSUE_SELECT_BY_PROJECT: &str = "SELECT i.id, i.project_id,
        p.name AS project_name, p.color AS project_color, p.color_index AS project_color_index,
        i.title, i.description, i.state_type,
        COALESCE(ro.name, i.runner_override) AS runner_override,
-       i.runner_override_id, i.workspace_strategy, i.created_at, i.updated_at
+       i.runner_override_id, i.workspace_strategy, i.linear_url, i.linear_key,
+       i.created_at, i.updated_at
 FROM issues i
 JOIN projects p ON p.id = i.project_id
 LEFT JOIN runners ro ON ro.id = i.runner_override_id
@@ -961,7 +1091,8 @@ const ISSUE_SELECT_BY_ID: &str = "SELECT i.id, i.project_id,
        p.name AS project_name, p.color AS project_color, p.color_index AS project_color_index,
        i.title, i.description, i.state_type,
        COALESCE(ro.name, i.runner_override) AS runner_override,
-       i.runner_override_id, i.workspace_strategy, i.created_at, i.updated_at
+       i.runner_override_id, i.workspace_strategy, i.linear_url, i.linear_key,
+       i.created_at, i.updated_at
 FROM issues i
 JOIN projects p ON p.id = i.project_id
 LEFT JOIN runners ro ON ro.id = i.runner_override_id

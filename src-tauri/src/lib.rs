@@ -1,5 +1,7 @@
+mod hooks;
 mod models;
 mod sessions;
+mod sidecar;
 mod state;
 mod store;
 mod workspace;
@@ -26,13 +28,26 @@ pub fn run() {
         .setup(|app| {
             let state = tauri::async_runtime::block_on(AppState::new(app.handle()))
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+            let notify_socket_path = state.notify_socket_path.clone();
             app.manage(state);
+            // Start the `marrow` context-bus listener (ADR 0008/0009). Unix-only;
+            // elsewhere `notify_socket_path` is None and the sidecar is inert.
+            #[cfg(unix)]
+            if let Some(path) = notify_socket_path {
+                sidecar::start(app.handle().clone(), std::path::PathBuf::from(path));
+            }
+            #[cfg(not(unix))]
+            let _ = notify_socket_path;
             Ok(())
         })
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::CloseRequested { .. }) {
                 if let Some(state) = window.try_state::<AppState>() {
                     state.sessions.kill_all();
+                    // Best-effort: remove the notify socket so it doesn't linger.
+                    if let Some(path) = &state.notify_socket_path {
+                        let _ = std::fs::remove_file(path);
+                    }
                 }
             }
         })
@@ -44,6 +59,7 @@ pub fn run() {
             store::create_group,
             store::create_issue,
             store::update_issue,
+            store::update_project,
             store::transition_issue,
             store::list_issues,
             store::list_board_columns,
@@ -64,6 +80,9 @@ pub fn run() {
             sessions::set_session_status,
             sessions::snooze_session,
             sessions::get_session_scrollback,
+            hooks::claude_hook_status,
+            hooks::install_claude_hook,
+            hooks::uninstall_claude_hook,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

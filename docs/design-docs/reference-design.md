@@ -109,13 +109,16 @@ search, settings/Linear), `CSidebarExpanded` (Group accordions + Project rows wi
 These divergences were found in the reference and reviewed; each now has a call (2026-05-23). Apply
 them when this reference is implemented — do **not** lift the reference verbatim where it conflicts.
 
-1. **Alert color — undecided; choose by eye via 3 sample pages.** The reference disagrees with itself:
-   `colors_and_type.css` / `chrome.jsx` / Cockpit / Feed use **Neon Cyan `#00d9ff`** plus an animated
-   **rainbow** attention dot/pill, while **Board v2** uses **warm amber `#f5a524`**.
-   **Action (not yet built):** produce **3 sample pages, one per alert treatment — (a) Neon Cyan,
-   (b) animated rainbow, (c) warm amber** — so the choice can be made visually. _Interacts with #4:_
-   #4 already fixes the Board card treatment (rainbow outline + amber Started column); this choice
-   governs the alert color on the other surfaces (Cockpit, Feed, shell counts/pills).
+1. **Alert color — RESOLVED: warm amber `#f5a524` (chosen 2026-06-03).** The reference disagreed with
+   itself: `colors_and_type.css` / `chrome.jsx` / Cockpit / Feed used **Neon Cyan `#00d9ff`** plus an
+   animated **rainbow** attention dot/pill, while **Board v2** used **warm amber `#f5a524`**.
+   **Decision (implemented in slice 0002, Step 9):** all three treatments ship as a live, toggleable
+   setting (the `Palette` control in the topbar; `alertTreatment` in the UI store), and the **committed
+   default is warm amber** — `--status-needs-input` is amber in both themes (`#f5a524` dark,
+   `#b26b00` light). Cyan and animated rainbow remain selectable for users who prefer them; the rainbow
+   treatment is disabled under reduce-motion. _Interacts with #4:_ #4 fixes the Board card treatment
+   (rainbow outline + amber Started column); this choice governs the alert color on the other surfaces
+   (Cockpit, Feed, shell counts/pills).
 2. **Project colors → follow the `--project-*` tokens.** The hard-coded demo hues in `shell-data.js` /
    `board-v2.jsx` (webapp `#5b8cff`, api `#79fa87`, docs `#ffb300`, infra `#7c4dff`/`#9d7bff`) are
    **wrong**. The curated `--project-1…6` palette in `colors_and_type.css` is canonical.

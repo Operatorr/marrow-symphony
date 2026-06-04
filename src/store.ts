@@ -3,6 +3,23 @@ import type { ViewMode } from "@/types";
 
 const THEME_KEY = "marrow:dark";
 const REDUCE_MOTION_KEY = "marrow:reduce-motion";
+const ALERT_KEY = "marrow:alert";
+
+export type AlertTreatment = "amber" | "cyan" | "rainbow";
+const ALERT_TREATMENTS: AlertTreatment[] = ["amber", "cyan", "rainbow"];
+
+function resolveInitialAlert(): AlertTreatment {
+  const stored = localStorage.getItem(ALERT_KEY);
+  return stored === "cyan" || stored === "rainbow" ? stored : "amber";
+}
+
+/** Apply exactly one `alert-*` class to <html> so the treatment is live. */
+function applyAlertClass(treatment: AlertTreatment) {
+  const root = document.documentElement.classList;
+  for (const candidate of ALERT_TREATMENTS) {
+    root.toggle(`alert-${candidate}`, candidate === treatment);
+  }
+}
 
 /** Resolve the startup theme: an explicit prior choice wins, else follow the OS. */
 function resolveInitialDark(): boolean {
@@ -19,6 +36,7 @@ function resolveInitialDark(): boolean {
 interface UiState {
   dark: boolean;
   reduceMotion: boolean;
+  alertTreatment: AlertTreatment;
   sidebarOpen: boolean;
   selectedProjectId: number | null;
   boardScope: "project" | "global";
@@ -27,6 +45,7 @@ interface UiState {
   view: ViewMode;
   toggleDark: () => void;
   toggleReduceMotion: () => void;
+  cycleAlertTreatment: () => void;
   toggleSidebar: () => void;
   selectProject: (projectId: number | null) => void;
   setBoardScope: (scope: "project" | "global") => void;
@@ -39,15 +58,18 @@ const initialDark = resolveInitialDark();
 const initialReduceMotion =
   localStorage.getItem(REDUCE_MOTION_KEY) === "true" ||
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const initialAlert = resolveInitialAlert();
 
 // Apply once at module load so the DOM matches the initial store state and
 // dark-preferring users don't get a light-mode flash on boot/reload.
 document.documentElement.classList.toggle("dark", initialDark);
 document.documentElement.classList.toggle("reduce-motion", initialReduceMotion);
+applyAlertClass(initialAlert);
 
 export const useUiStore = create<UiState>((set) => ({
   dark: initialDark,
   reduceMotion: initialReduceMotion,
+  alertTreatment: initialAlert,
   sidebarOpen: true,
   selectedProjectId: null,
   boardScope: "global",
@@ -68,6 +90,14 @@ export const useUiStore = create<UiState>((set) => ({
       localStorage.setItem(REDUCE_MOTION_KEY, String(reduceMotion));
       return { reduceMotion };
     }),
+  cycleAlertTreatment: () =>
+    set((state) => {
+      const next =
+        ALERT_TREATMENTS[(ALERT_TREATMENTS.indexOf(state.alertTreatment) + 1) % ALERT_TREATMENTS.length];
+      applyAlertClass(next);
+      localStorage.setItem(ALERT_KEY, next);
+      return { alertTreatment: next };
+    }),
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
   selectProject: (projectId) =>
     set({
@@ -84,3 +114,13 @@ export const useUiStore = create<UiState>((set) => ({
       openedIssueId: view === "board" ? state.openedIssueId : null,
     })),
 }));
+
+// Follow the OS reduce-motion preference live, but only while the user has not
+// made an explicit in-app choice (which is persisted to localStorage).
+window
+  .matchMedia("(prefers-reduced-motion: reduce)")
+  .addEventListener("change", (event) => {
+    if (localStorage.getItem(REDUCE_MOTION_KEY) !== null) return;
+    document.documentElement.classList.toggle("reduce-motion", event.matches);
+    useUiStore.setState({ reduceMotion: event.matches });
+  });
