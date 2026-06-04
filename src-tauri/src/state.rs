@@ -2,11 +2,20 @@ use crate::sessions::SessionRegistry;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 use std::fs;
+use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
 pub struct AppState {
     pub pool: SqlitePool,
     pub sessions: SessionRegistry,
+    /// The per-app `marrow` notify/context-bus socket path, injected into each
+    /// Session as `MARROW_NOTIFY_SOCKET`. `None` on platforms without unix
+    /// domain sockets, where the sidecar transport is unavailable.
+    pub notify_socket_path: Option<String>,
+    /// The unguessable `state` value generated for the in-flight Linear OAuth
+    /// authorization, verified once when the callback is completed (CSRF guard).
+    /// `None` when no authorization is pending; consumed on a successful match.
+    pub oauth_state: Mutex<Option<String>>,
 }
 
 impl AppState {
@@ -53,9 +62,22 @@ impl AppState {
         .await
         .map_err(|err| format!("failed to reconcile stale sessions: {err}"))?;
 
+        let notify_socket_path = if cfg!(unix) {
+            Some(
+                app_data_dir
+                    .join("marrow-notify.sock")
+                    .to_string_lossy()
+                    .to_string(),
+            )
+        } else {
+            None
+        };
+
         Ok(Self {
             pool,
             sessions: SessionRegistry::default(),
+            notify_socket_path,
+            oauth_state: Mutex::new(None),
         })
     }
 }

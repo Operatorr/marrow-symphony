@@ -15,6 +15,8 @@ pub struct Project {
     pub default_workspace_strategy: String,
     pub color: String,
     pub color_index: i64,
+    pub linear_url: Option<String>,
+    pub linear_key: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -52,6 +54,8 @@ pub struct Issue {
     pub runner_override: Option<String>,
     pub runner_override_id: Option<i64>,
     pub workspace_strategy: String,
+    pub linear_url: Option<String>,
+    pub linear_key: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -217,6 +221,19 @@ pub struct UpdateIssueInput {
     pub state_type: Option<String>,
     pub runner_override_id: Option<Option<i64>>,
     pub workspace_strategy: Option<String>,
+    pub linear_url: Option<String>,
+    pub linear_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProjectInput {
+    pub project_id: i64,
+    pub name: Option<String>,
+    pub default_runner_id: Option<i64>,
+    pub default_workspace_strategy: Option<String>,
+    pub linear_url: Option<String>,
+    pub linear_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

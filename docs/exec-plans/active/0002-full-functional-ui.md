@@ -243,3 +243,24 @@ ADRs when they crystallize.
   worktrees. Worktree isolation stays **opt-in / off by default** by design, specced in
   [`0003`](./0003-worktree-isolation.md); repo-owned **Workspace setup hooks** captured in **ADR 0010**
   (impl in 0003). No steps started yet.
+- 2026-06-03 — **Slice fully implemented end to end.** A gap audit found Steps 0–4, 6 and the Runner
+  registry/resume (Steps 7) already built on `master`; this pass closed the remainder. **Step 5 (marrow
+  sidecar)** built from scratch: a per-app unix-socket context bus (`src-tauri/src/sidecar.rs`) + the
+  `marrow` CLI bin (`src-tauri/src/bin/marrow.rs`, on the Session `PATH`) with `notify` / `issue read` /
+  `issue comment` / `diff` verbs, local-backed, no-op when env vars are absent; plus a **consented,
+  additive `Stop`+`Notification` Claude hook installer** (`src-tauri/src/hooks.rs`) that merges into
+  `~/.claude/settings.json` only on explicit in-app click and removes cleanly. **Step 8** swapped the
+  CSS-gradient placeholder for a real WebGL `<Shader/>` port (theme-aware, reduce-motion 2D fallback).
+  **Step 9 / alert color resolved → warm amber** (`--status-needs-input` amber in both themes), with all
+  three treatments (amber / cyan / animated-rainbow) shipped as a live topbar toggle. Cross-cutting
+  states landed across every surface: `.skeleton` loaders, inline error+retry on all data queries, and
+  a Linear offline indicator. Filled the smaller gaps too: display-only **Linear** link fields on
+  Projects + Issues (schema + `update_project`), sidebar **Group accordions**, **Cockpit** static
+  scrollback previews + group reorder + needs-input-gated *Open in Feed*, **Issue page** degraded state +
+  board-column label + human comment composer, **Runner** reassign-before-delete flow + interpolation
+  hints, **Feed** ⌘↵-done + degraded/skeleton diff + "N more waiting", Geist Mono, and detection
+  hardening (split-read carry + unit tests). `cargo test` (22 tests) and `pnpm build` are green.
+  **Deviation:** `projects.default_runner_id` stays nullable (with `ON DELETE RESTRICT` + app-side
+  non-null enforcement) rather than a fragile table-rebuild migration to add `NOT NULL`; the `marrow`
+  bin is PATH-injected as a same-crate cargo bin (production bundling should additionally declare it as
+  a Tauri `bundle.externalBin`).

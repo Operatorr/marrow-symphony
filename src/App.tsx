@@ -1,40 +1,79 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
+  ArrowDown,
+  ArrowUp,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Clock,
   Code2,
+  CornerDownLeft,
+  ExternalLink,
   FolderGit2,
   FolderPlus,
   Gauge,
   GitBranch,
+  Globe,
   Inbox,
+  KeyRound,
   Layers3,
+  Link2,
+  LoaderCircle,
   Maximize2,
   MessageSquare,
   Moon,
+  MoreVertical,
   PanelLeft,
+  Palette,
+  Pencil,
+  Pin,
+  PinOff,
   Play,
+  Plug,
   Plus,
   RefreshCw,
   Search,
   Settings,
+  ShieldCheck,
   Sparkles,
   Square,
   Sun,
+  Unlink,
   X,
 } from "lucide-react";
+import { Dialog, DropdownMenu, Popover } from "radix-ui";
 import {
+  claudeHookStatus,
   createIssue,
+  createIssueComment,
   createProject,
   createRunner,
   deleteRunner,
+  getSessionScrollback,
+  installClaudeHook,
   isTauriRuntime,
   killSession,
+  linearAuthorizeUrl,
+  linearCompleteOauth,
+  linearConnectApiKey,
+  linearDisconnect,
+  linearImportIssues,
+  linearLinkProject,
+  linearListProjects,
+  linearStatus,
+  linearUnlinkProject,
   listBoardColumns,
   listGroups,
   listIssueComments,
@@ -42,35 +81,40 @@ import {
   listProjects,
   listRunners,
   listSessions,
+  openExternal,
   openProjectDirectory,
-  ping,
   setSessionStatus,
   snoozeSession,
   startSession,
   transitionIssue,
+  uninstallClaudeHook,
   updateIssue,
+  updateProject,
   updateRunner,
   workspaceDiff,
 } from "@/api";
 import { Button } from "@/components/ui/button";
+import { Shader } from "@/components/Shader";
 import { TerminalPane } from "@/components/TerminalPane";
 import { cn } from "@/lib/utils";
-import { useUiStore } from "@/store";
+import { useUiStore, type AlertTreatment } from "@/store";
 import type {
   BoardColumn,
   Group,
   Issue,
+  LinearConnection,
   Project,
   Runner,
   SessionStatusEvent,
   SessionSummary,
   StateType,
   ViewMode,
+  WorkspaceDiff,
 } from "@/types";
 
 const viewLabels: Record<ViewMode, string> = {
   board: "Board",
-  cockpit: "Cockpit",
+  sessions: "Sessions",
   feed: "Feed",
 };
 
@@ -94,8 +138,10 @@ function App() {
     openedIssueId,
     focusedSessionId,
     view,
+    alertTreatment,
     toggleDark,
     toggleReduceMotion,
+    cycleAlertTreatment,
     toggleSidebar,
     selectProject,
     setBoardScope,
@@ -103,11 +149,11 @@ function App() {
     focusSession,
     setView,
   } = useUiStore();
-  const [projectSearch, setProjectSearch] = useState("");
-  const [groupFilter, setGroupFilter] = useState<number | "all">("all");
   const [runnerPanelOpen, setRunnerPanelOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [linearDialogOpen, setLinearDialogOpen] = useState(false);
+  const [linkLinearProjectId, setLinkLinearProjectId] = useState<number | null>(null);
 
-  const pingQuery = useQuery({ queryKey: ["ping"], queryFn: ping });
   const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: listProjects });
   const groupsQuery = useQuery({ queryKey: ["groups"], queryFn: listGroups });
   const issuesQuery = useQuery({
@@ -131,6 +177,7 @@ function App() {
     enabled: boardScope === "project" && selectedProjectId !== null,
   });
   const runnersQuery = useQuery({ queryKey: ["runners"], queryFn: listRunners });
+  const linearStatusQuery = useQuery({ queryKey: ["linear-status"], queryFn: linearStatus });
 
   useEffect(() => {
     if (!isTauriRuntime()) return undefined;
@@ -149,6 +196,13 @@ function App() {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
         event.preventDefault();
         toggleSidebar();
+      }
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        (event.key.toLowerCase() === "f" || event.key.toLowerCase() === "k")
+      ) {
+        event.preventDefault();
+        setSearchOpen(true);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -184,26 +238,27 @@ function App() {
 
   return (
     <div className="app-shell">
-      <Shader disabled={reduceMotion} />
+      <Shader disabled={reduceMotion} dark={dark} />
       <TopBar
         dark={dark}
         reduceMotion={reduceMotion}
+        alertTreatment={alertTreatment}
         sidebarOpen={sidebarOpen}
         view={view}
         needsCount={activeNeeds.length}
-        pingText={pingQuery.data ?? (pingQuery.isError ? "ping failed" : "pinging")}
+        linearConnection={linearStatusQuery.data ?? null}
         runnerPanelOpen={runnerPanelOpen}
+        onOpenSearch={() => setSearchOpen(true)}
+        onOpenLinear={() => setLinearDialogOpen(true)}
         onToggleDark={toggleDark}
         onToggleReduceMotion={toggleReduceMotion}
+        onCycleAlert={cycleAlertTreatment}
         onToggleSidebar={toggleSidebar}
         onSetView={(nextView) => {
           setView(nextView);
           if (nextView !== "board") openIssue(null);
         }}
-        onRefresh={() => {
-          void pingQuery.refetch();
-          invalidateWork();
-        }}
+        onRefresh={invalidateWork}
         onToggleRunnerPanel={() => setRunnerPanelOpen((value) => !value)}
       />
 
@@ -213,12 +268,11 @@ function App() {
             projects={projects}
             groups={groups}
             selectedProjectId={selectedProjectId}
-            groupFilter={groupFilter}
-            search={projectSearch}
             stats={projectStats}
             loading={projectsQuery.isPending}
-            onGroupFilter={setGroupFilter}
-            onSearch={setProjectSearch}
+            error={projectsQuery.isError ? projectsQuery.error : null}
+            linearConnected={Boolean(linearStatusQuery.data?.connected)}
+            onRetry={() => void projectsQuery.refetch()}
             onSelectProject={(projectId) => {
               selectProject(projectId);
               setView("board");
@@ -228,6 +282,8 @@ function App() {
               setView("board");
               invalidateWork();
             }}
+            onProjectChanged={invalidateWork}
+            onLinkLinear={(projectId) => setLinkLinearProjectId(projectId)}
           />
         )}
 
@@ -237,6 +293,8 @@ function App() {
               runners={runners}
               projects={projects}
               loading={runnersQuery.isPending}
+              error={runnersQuery.isError ? runnersQuery.error : null}
+              onRetry={() => void runnersQuery.refetch()}
               onChanged={() => {
                 void queryClient.invalidateQueries({ queryKey: ["runners"] });
                 invalidateWork();
@@ -278,6 +336,17 @@ function App() {
                   selectedProjectId !== null &&
                   boardColumnsQuery.isPending)
               }
+              error={
+                issuesQuery.isError
+                  ? issuesQuery.error
+                  : boardColumnsQuery.isError
+                    ? boardColumnsQuery.error
+                    : null
+              }
+              onRetry={() => {
+                void issuesQuery.refetch();
+                void boardColumnsQuery.refetch();
+              }}
               onScopeChange={setBoardScope}
               onIssueCreated={invalidateWork}
               onIssueOpen={(issueId) => openIssue(issueId)}
@@ -285,11 +354,13 @@ function App() {
             />
           )}
 
-          {view === "cockpit" && (
-            <CockpitView
+          {view === "sessions" && (
+            <SessionsView
               sessions={scopedSessions}
               focusedSessionId={focusedSessionId}
               loading={allSessionsQuery.isPending}
+              error={allSessionsQuery.isError ? allSessionsQuery.error : null}
+              onRetry={() => void allSessionsQuery.refetch()}
               onFocusSession={focusSession}
               onOpenFeed={(sessionId) => {
                 focusSession(sessionId);
@@ -303,17 +374,58 @@ function App() {
             <FeedView
               sessions={scopedSessions}
               issues={allIssues}
+              reduceMotion={reduceMotion}
+              dark={dark}
               focusedSessionId={focusedSessionId}
               onFocusSession={focusSession}
-              onOpenCockpit={(sessionId) => {
+              onOpenSessions={(sessionId) => {
                 focusSession(sessionId);
-                setView("cockpit");
+                setView("sessions");
               }}
               onChanged={invalidateWork}
             />
           )}
         </main>
       </div>
+
+      {searchOpen && (
+        <GlobalSearch
+          projects={projects}
+          issues={allIssues}
+          onClose={() => setSearchOpen(false)}
+          onPickProject={(projectId) => {
+            selectProject(projectId);
+            setView("board");
+            setSearchOpen(false);
+          }}
+          onPickIssue={(issueId) => {
+            openIssue(issueId);
+            setView("board");
+            setSearchOpen(false);
+          }}
+        />
+      )}
+
+      <LinearConnectDialog
+        open={linearDialogOpen}
+        connection={linearStatusQuery.data ?? null}
+        onOpenChange={setLinearDialogOpen}
+        onChanged={() => {
+          void queryClient.invalidateQueries({ queryKey: ["linear-status"] });
+          invalidateWork();
+        }}
+      />
+
+      <LinearLinkDialog
+        project={projects.find((project) => project.id === linkLinearProjectId) ?? null}
+        connected={Boolean(linearStatusQuery.data?.connected)}
+        onClose={() => setLinkLinearProjectId(null)}
+        onConnect={() => {
+          setLinkLinearProjectId(null);
+          setLinearDialogOpen(true);
+        }}
+        onChanged={invalidateWork}
+      />
     </div>
   );
 }
@@ -321,13 +433,17 @@ function App() {
 function TopBar({
   dark,
   reduceMotion,
+  alertTreatment,
   sidebarOpen,
   view,
   needsCount,
-  pingText,
+  linearConnection,
   runnerPanelOpen,
+  onOpenSearch,
+  onOpenLinear,
   onToggleDark,
   onToggleReduceMotion,
+  onCycleAlert,
   onToggleSidebar,
   onSetView,
   onRefresh,
@@ -335,18 +451,23 @@ function TopBar({
 }: {
   dark: boolean;
   reduceMotion: boolean;
+  alertTreatment: AlertTreatment;
   sidebarOpen: boolean;
   view: ViewMode;
   needsCount: number;
-  pingText: string;
+  linearConnection: LinearConnection | null;
   runnerPanelOpen: boolean;
+  onOpenSearch: () => void;
+  onOpenLinear: () => void;
   onToggleDark: () => void;
   onToggleReduceMotion: () => void;
+  onCycleAlert: () => void;
   onToggleSidebar: () => void;
   onSetView: (view: ViewMode) => void;
   onRefresh: () => void;
   onToggleRunnerPanel: () => void;
 }) {
+  const linearConnected = Boolean(linearConnection?.connected);
   return (
     <header className="topbar">
       <div className="topbar-cluster min-w-0 flex-1">
@@ -367,11 +488,12 @@ function TopBar({
         </div>
       </div>
 
-      <div className="view-switch" role="tablist" aria-label="View">
+      <div className="view-switch" role="group" aria-label="View">
         {(Object.keys(viewLabels) as ViewMode[]).map((candidate) => (
           <button
             key={candidate}
             type="button"
+            aria-pressed={view === candidate}
             className={cn("view-switch-button", view === candidate && "active")}
             onClick={() => onSetView(candidate)}
           >
@@ -382,21 +504,30 @@ function TopBar({
       </div>
 
       <div className="topbar-cluster min-w-0 flex-1 justify-end">
+        <span className="sr-only" role="status" aria-live="polite">
+          {needsCount > 0 ? `${needsCount} sessions need input` : "No sessions need input"}
+        </span>
         {needsCount > 0 && (
           <span className="needs-pill">
             <AttentionPip />
             {needsCount} need input
           </span>
         )}
-        <div className="topbar-search hidden lg:flex">
-          <Search className="size-3.5" />
-          <span className="truncate">Search</span>
-          <Kbd>⌘F</Kbd>
-        </div>
-        <code className="hidden max-w-44 truncate font-mono text-[11px] text-[var(--fg4)] xl:block">
-          {pingText}
-        </code>
-        <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label="Refresh" title="Refresh">
+        <button
+          type="button"
+          className="topbar-search hidden lg:flex"
+          onClick={onOpenSearch}
+          aria-label="Search Issues, Projects, and prompts"
+          title="Search Issues, Projects, and prompts"
+        >
+          <Search className="size-3.5 shrink-0" />
+          <span className="flex-1 truncate text-left">Search</span>
+          <Kbd>⌘K</Kbd>
+        </button>
+        <Button variant="ghost" size="icon-sm" onClick={onOpenSearch} aria-label="Search" title="Search" className="lg:hidden">
+          <Search />
+        </Button>
+        <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label="Refresh data" title="Refresh data">
           <RefreshCw />
         </Button>
         <Button
@@ -407,6 +538,15 @@ function TopBar({
           title={reduceMotion ? "Enable shader" : "Disable shader"}
         >
           <Sparkles className={cn(reduceMotion && "opacity-40")} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onCycleAlert}
+          aria-label={`Alert color: ${alertTreatment}. Click to cycle.`}
+          title={`Alert color: ${alertTreatment} (click to cycle)`}
+        >
+          <Palette />
         </Button>
         <Button
           variant="ghost"
@@ -427,7 +567,19 @@ function TopBar({
         >
           {dark ? <Sun /> : <Moon />}
         </Button>
-        <span className="linear-badge">Linear</span>
+        <button
+          type="button"
+          className={cn("linear-badge", linearConnected ? "online" : "offline")}
+          onClick={onOpenLinear}
+          title={
+            linearConnected
+              ? `Linear connected${linearConnection?.workspaceName ? ` — ${linearConnection.workspaceName}` : ""} (click to manage)`
+              : "Connect Linear to link Projects and import Issues"
+          }
+        >
+          <span className={cn("status-dot", linearConnected ? "status-running" : "status-exited")} />
+          {linearConnected ? linearConnection?.workspaceName ?? "Linear" : "Connect Linear"}
+        </button>
       </div>
     </header>
   );
@@ -437,61 +589,87 @@ function Sidebar({
   projects,
   groups,
   selectedProjectId,
-  groupFilter,
-  search,
   stats,
   loading,
-  onGroupFilter,
-  onSearch,
+  error,
+  linearConnected,
+  onRetry,
   onSelectProject,
   onProjectCreated,
+  onProjectChanged,
+  onLinkLinear,
 }: {
   projects: Project[];
   groups: Group[];
   selectedProjectId: number | null;
-  groupFilter: number | "all";
-  search: string;
   stats: Map<number, { live: number; needs: number }>;
   loading: boolean;
-  onGroupFilter: (groupId: number | "all") => void;
-  onSearch: (value: string) => void;
+  error: unknown;
+  linearConnected: boolean;
+  onRetry: () => void;
   onSelectProject: (projectId: number | null) => void;
   onProjectCreated: (project: Project) => void;
+  onProjectChanged: () => void;
+  onLinkLinear: (projectId: number) => void;
 }) {
-  const filtered = projects.filter((project) => {
-    const matchesGroup = groupFilter === "all" || project.groupId === groupFilter;
-    const matchesSearch =
-      search.trim().length === 0 ||
-      project.name.toLowerCase().includes(search.trim().toLowerCase());
-    return matchesGroup && matchesSearch;
+  const [collapsed, setCollapsed] = useState<Set<number | "ungrouped" | "pinned">>(new Set());
+  const [pinned, setPinned] = useState<Set<number>>(() => loadPinnedProjects());
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+
+  const renameMutation = useMutation({
+    mutationFn: (vars: { projectId: number; name: string }) => updateProject(vars),
+    onSuccess: () => {
+      setRenamingId(null);
+      onProjectChanged();
+    },
+    onError: () => setRenamingId(null),
   });
+
+  const togglePin = (projectId: number) =>
+    setPinned((current) => {
+      const next = new Set(current);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      savePinnedProjects(next);
+      return next;
+    });
+
+  // Pinned Projects float into a dedicated bucket at the top and are removed
+  // from their normal Group bucket so they appear exactly once.
+  const pinnedProjects = projects.filter((project) => pinned.has(project.id));
+  const rest = projects.filter((project) => !pinned.has(project.id));
+
+  const buckets: Array<{ key: number | "ungrouped" | "pinned"; name: string; projects: Project[] }> = [];
+  if (pinnedProjects.length > 0) buckets.push({ key: "pinned", name: "Pinned", projects: pinnedProjects });
+  for (const group of groups) {
+    const groupProjects = rest.filter((project) => project.groupId === group.id);
+    if (groupProjects.length > 0) buckets.push({ key: group.id, name: group.name, projects: groupProjects });
+  }
+  const ungrouped = rest.filter((project) => project.groupId === null);
+  if (ungrouped.length > 0) buckets.push({ key: "ungrouped", name: "Ungrouped", projects: ungrouped });
+
+  const aggregate = (group: Project[]) =>
+    group.reduce(
+      (acc, project) => {
+        const counts = stats.get(project.id) ?? { live: 0, needs: 0 };
+        return { live: acc.live + counts.live, needs: acc.needs + counts.needs };
+      },
+      { live: 0, needs: 0 },
+    );
+
+  const toggleGroup = (key: number | "ungrouped" | "pinned") =>
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   return (
     <aside className="sidebar">
-      <div className="space-y-3 p-3">
-        <select
-          value={groupFilter}
-          onChange={(event) =>
-            onGroupFilter(event.target.value === "all" ? "all" : Number(event.target.value))
-          }
-          className="field h-8"
-        >
-          <option value="all">All Groups</option>
-          {groups.map((group) => (
-            <option key={group.id} value={group.id}>
-              {group.name}
-            </option>
-          ))}
-        </select>
-        <label className="search-field">
-          <Search className="size-3.5" />
-          <input
-            value={search}
-            onChange={(event) => onSearch(event.target.value)}
-            placeholder="Projects"
-          />
-        </label>
-        <AddProjectForm groups={groups} onCreated={onProjectCreated} />
+      <div className="sidebar-head">
+        <div className="label-caps">Projects</div>
+        <AddProjectMenu groups={groups} onCreated={onProjectCreated} />
       </div>
 
       <div className="sidebar-list">
@@ -508,37 +686,228 @@ function Sidebar({
           <Layers3 className="size-3.5 text-[var(--fg4)]" />
         </button>
 
-        {loading && <div className="px-2 py-3 text-[12px] text-[var(--fg3)]">Loading</div>}
-        {!loading && filtered.length === 0 && (
-          <div className="empty-panel mx-1 my-2">No Projects</div>
+        {error ? (
+          <div className="px-1 py-2">
+            <QueryError error={error} onRetry={onRetry} label="Couldn't load Projects" />
+          </div>
+        ) : loading ? (
+          <div className="px-1 py-2">
+            <SkeletonRows rows={4} h={46} />
+          </div>
+        ) : buckets.length === 0 ? (
+          <div className="empty-panel mx-1 my-2">No Projects yet — add one with +.</div>
+        ) : (
+          buckets.map((bucket) => {
+            const isCollapsed = collapsed.has(bucket.key);
+            const agg = aggregate(bucket.projects);
+            return (
+              <section key={bucket.key} className="sidebar-group">
+                <button
+                  type="button"
+                  className="sidebar-group-header"
+                  onClick={() => toggleGroup(bucket.key)}
+                >
+                  <span className="flex min-w-0 items-center gap-1">
+                    {isCollapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+                    {bucket.key === "pinned" && <Pin className="size-3 text-[var(--fg4)]" />}
+                    <span className="truncate">{bucket.name}</span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    {agg.live > 0 && <span className="count-pill">{agg.live}</span>}
+                    {agg.needs > 0 && <AttentionPip />}
+                  </span>
+                </button>
+                {!isCollapsed &&
+                  bucket.projects.map((project) => (
+                    <ProjectRow
+                      key={project.id}
+                      project={project}
+                      selected={selectedProjectId === project.id}
+                      counts={stats.get(project.id) ?? { live: 0, needs: 0 }}
+                      pinned={pinned.has(project.id)}
+                      renaming={renamingId === project.id}
+                      linearConnected={linearConnected}
+                      onSelect={() => onSelectProject(project.id)}
+                      onTogglePin={() => togglePin(project.id)}
+                      onStartRename={() => setRenamingId(project.id)}
+                      onCommitRename={(name) => renameMutation.mutate({ projectId: project.id, name })}
+                      onCancelRename={() => setRenamingId(null)}
+                      onLinkLinear={() => onLinkLinear(project.id)}
+                    />
+                  ))}
+              </section>
+            );
+          })
         )}
-        {filtered.map((project) => {
-          const selected = selectedProjectId === project.id;
-          const counts = stats.get(project.id) ?? { live: 0, needs: 0 };
-          return (
-            <button
-              key={project.id}
-              type="button"
-              onClick={() => onSelectProject(project.id)}
-              className={cn("project-row", selected && "selected", counts.needs > 0 && "attention")}
-            >
-              <ProjectChip project={project} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium">{project.name}</span>
-                <span className="block truncate text-[11px] text-[var(--fg4)]">
-                  {project.groupName ?? "Ungrouped"} · {project.gitBacked ? "git" : "non-git"}
-                </span>
-              </span>
-              <span className="flex items-center gap-1">
-                {!project.gitBacked && <AlertCircle className="size-3.5 text-[var(--status-exited)]" />}
-                {counts.live > 0 && <span className="count-pill">{counts.live}</span>}
-                {counts.needs > 0 && <AttentionPip />}
-              </span>
-            </button>
-          );
-        })}
       </div>
     </aside>
+  );
+}
+
+function ProjectRow({
+  project,
+  selected,
+  counts,
+  pinned,
+  renaming,
+  linearConnected,
+  onSelect,
+  onTogglePin,
+  onStartRename,
+  onCommitRename,
+  onCancelRename,
+  onLinkLinear,
+}: {
+  project: Project;
+  selected: boolean;
+  counts: { live: number; needs: number };
+  pinned: boolean;
+  renaming: boolean;
+  linearConnected: boolean;
+  onSelect: () => void;
+  onTogglePin: () => void;
+  onStartRename: () => void;
+  onCommitRename: (name: string) => void;
+  onCancelRename: () => void;
+  onLinkLinear: () => void;
+}) {
+  if (renaming) {
+    return (
+      <div className={cn("project-row project-row--menu", selected && "selected")}>
+        <ProjectChip project={project} />
+        <RenameInput initial={project.name} onCommit={onCommitRename} onCancel={onCancelRename} />
+      </div>
+    );
+  }
+  return (
+    <div
+      className={cn(
+        "project-row project-row--menu",
+        selected && "selected",
+        counts.needs > 0 && "attention",
+      )}
+    >
+      <button type="button" className="project-row-main" onClick={onSelect}>
+        <ProjectChip project={project} />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5">
+            <span className="block truncate font-medium">{project.name}</span>
+            {pinned && <Pin className="size-3 shrink-0 text-[var(--fg4)]" />}
+            <LinearChip linearKey={project.linearKey} linearUrl={project.linearUrl} />
+          </span>
+          <span className="block truncate text-[11px] text-[var(--fg4)]">
+            {project.gitBacked ? "git" : "non-git"}
+          </span>
+        </span>
+        <span className="flex items-center gap-1">
+          {!project.gitBacked && <AlertCircle className="size-3.5 text-[var(--status-exited)]" />}
+          {counts.live > 0 && <span className="count-pill">{counts.live}</span>}
+          {counts.needs > 0 && <AttentionPip />}
+        </span>
+      </button>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <button type="button" className="row-menu-trigger" aria-label={`Actions for ${project.name}`}>
+            <MoreVertical className="size-3.5" />
+          </button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content className="menu-content" align="end" sideOffset={4}>
+            <DropdownMenu.Item className="menu-item" onSelect={onTogglePin}>
+              {pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+              {pinned ? "Unpin" : "Pin"}
+            </DropdownMenu.Item>
+            <DropdownMenu.Item className="menu-item" onSelect={onStartRename}>
+              <Pencil className="size-3.5" />
+              Rename
+            </DropdownMenu.Item>
+            <DropdownMenu.Separator className="menu-separator" />
+            {project.linearUrl && (
+              <DropdownMenu.Item
+                className="menu-item"
+                onSelect={() => void openExternal(project.linearUrl as string)}
+              >
+                <ExternalLink className="size-3.5" />
+                Open in Linear
+              </DropdownMenu.Item>
+            )}
+            <DropdownMenu.Item className="menu-item" onSelect={onLinkLinear}>
+              <Link2 className="size-3.5" />
+              {project.linearKey
+                ? "Manage Linear link…"
+                : linearConnected
+                  ? "Link to Linear…"
+                  : "Connect Linear…"}
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+    </div>
+  );
+}
+
+/** Inline single-field rename for a Project row. Commits on Enter/blur, cancels on Escape. */
+function RenameInput({
+  initial,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  onCommit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const done = useRef(false);
+  const finish = (raw: string) => {
+    if (done.current) return;
+    done.current = true;
+    const next = raw.trim();
+    if (next && next !== initial) onCommit(next);
+    else onCancel();
+  };
+  return (
+    <input
+      className="field h-7 flex-1 text-[13px]"
+      defaultValue={initial}
+      autoFocus
+      aria-label="Rename Project"
+      onFocus={(event) => event.currentTarget.select()}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          finish(event.currentTarget.value);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          done.current = true;
+          onCancel();
+        }
+      }}
+      onBlur={(event) => finish(event.currentTarget.value)}
+    />
+  );
+}
+
+/** The `+` button in the sidebar header; opens the Add-Project form in a popover. */
+function AddProjectMenu({ groups, onCreated }: { groups: Group[]; onCreated: (project: Project) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <Button variant="ghost" size="icon-sm" aria-label="Add Project" title="Add Project">
+          <Plus />
+        </Button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content className="popover-content" align="end" sideOffset={6}>
+          <AddProjectForm
+            groups={groups}
+            onCreated={(project) => {
+              setOpen(false);
+              onCreated(project);
+            }}
+          />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
@@ -549,8 +918,6 @@ function AddProjectForm({
   groups: Group[];
   onCreated: (project: Project) => void;
 }) {
-  const [path, setPath] = useState("");
-  const [name, setName] = useState("");
   const [groupId, setGroupId] = useState<number | "none" | "new">("none");
   const [groupName, setGroupName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -558,8 +925,6 @@ function AddProjectForm({
   const mutation = useMutation({
     mutationFn: createProject,
     onSuccess: (project) => {
-      setPath("");
-      setName("");
       setGroupName("");
       setGroupId("none");
       setError(null);
@@ -568,47 +933,21 @@ function AddProjectForm({
     onError: (err) => setError(String(err)),
   });
 
-  const chooseFolder = async () => {
+  const browse = async () => {
     setError(null);
     const selected = await openProjectDirectory();
     if (!selected) return;
-    setPath(selected);
-    if (!name.trim()) {
-      const segments = selected.split(/[\\/]/).filter(Boolean);
-      setName(segments[segments.length - 1] ?? "");
-    }
-  };
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
+    // The folder is the Project; the backend derives the name from its basename.
     mutation.mutate({
-      path,
-      name: name.trim() || undefined,
+      path: selected,
       groupId: typeof groupId === "number" ? groupId : null,
-      groupName: groupId === "new" ? groupName : null,
+      groupName: groupId === "new" ? groupName.trim() || null : null,
     });
   };
 
   return (
-    <form className="tool-panel space-y-2" onSubmit={submit}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="label-caps">Add Project</div>
-        <Button type="button" size="icon-xs" variant="ghost" onClick={chooseFolder} title="Choose folder">
-          <FolderPlus />
-        </Button>
-      </div>
-      <input
-        value={name}
-        onChange={(event) => setName(event.target.value)}
-        placeholder="Name"
-        className="field"
-      />
-      <input
-        value={path}
-        onChange={(event) => setPath(event.target.value)}
-        placeholder="Folder path"
-        className="field"
-      />
+    <div className="space-y-2">
+      <div className="label-caps">Add Project</div>
       <select
         value={groupId}
         onChange={(event) =>
@@ -621,6 +960,7 @@ function AddProjectForm({
           )
         }
         className="field"
+        aria-label="Group for the new Project"
       >
         <option value="none">No Group</option>
         {groups.map((group) => (
@@ -628,7 +968,7 @@ function AddProjectForm({
             {group.name}
           </option>
         ))}
-        <option value="new">New Group</option>
+        <option value="new">New Group…</option>
       </select>
       {groupId === "new" && (
         <input
@@ -636,14 +976,15 @@ function AddProjectForm({
           onChange={(event) => setGroupName(event.target.value)}
           placeholder="Group name"
           className="field"
+          aria-label="New Group name"
         />
       )}
-      {error && <div className="text-[12px] text-destructive">{error}</div>}
-      <Button type="submit" className="w-full" disabled={!path.trim() || mutation.isPending}>
-        <Plus />
-        Add
+      <Button type="button" className="w-full" onClick={() => void browse()} disabled={mutation.isPending}>
+        <FolderPlus />
+        {mutation.isPending ? "Adding…" : "Browse for folder…"}
       </Button>
-    </form>
+      {error && <div className="text-[12px] text-destructive">{error}</div>}
+    </div>
   );
 }
 
@@ -655,6 +996,8 @@ function BoardView({
   issues,
   allSessions,
   loading,
+  error,
+  onRetry,
   onScopeChange,
   onIssueCreated,
   onIssueOpen,
@@ -667,6 +1010,8 @@ function BoardView({
   issues: Issue[];
   allSessions: SessionSummary[];
   loading: boolean;
+  error: unknown;
+  onRetry: () => void;
   onScopeChange: (scope: "project" | "global") => void;
   onIssueCreated: () => void;
   onIssueOpen: (issueId: number) => void;
@@ -707,9 +1052,10 @@ function BoardView({
           <h2>{scope === "project" ? selectedProject?.name ?? "This Project" : "All Projects"}</h2>
           <p>{scope === "project" ? selectedProject?.path ?? "Select a Project" : "Global State Type board"}</p>
         </div>
-        <div className="segmented">
+        <div className="segmented" role="group" aria-label="Board scope">
           <button
             type="button"
+            aria-pressed={scope === "project"}
             className={cn(scope === "project" && "active")}
             onClick={() => onScopeChange("project")}
             disabled={!selectedProject}
@@ -718,6 +1064,7 @@ function BoardView({
           </button>
           <button
             type="button"
+            aria-pressed={scope === "global"}
             className={cn(scope === "global" && "active")}
             onClick={() => onScopeChange("global")}
           >
@@ -734,8 +1081,23 @@ function BoardView({
         />
       </div>
 
-      {loading && <div className="empty-panel">Loading Board</div>}
-      {!loading && issues.length === 0 && <div className="empty-panel">No Issues</div>}
+      {error ? (
+        <QueryError error={error} onRetry={onRetry} label="Couldn't load the Board" />
+      ) : loading ? (
+        <div className="board-grid">
+          {columns.map((column) => (
+            <section key={column.stateType} className="board-column">
+              <div className="board-column-header">
+                <span>{column.label}</span>
+              </div>
+              <SkeletonRows rows={2} h={64} />
+            </section>
+          ))}
+        </div>
+      ) : issues.length === 0 ? (
+        <div className="empty-panel">No Issues yet — add one above.</div>
+      ) : null}
+      {!error && !loading && (
       <div className="board-grid">
         {columns.map((column) => {
           const columnIssues = issues.filter((issue) => issue.stateType === column.stateType);
@@ -766,6 +1128,7 @@ function BoardView({
           );
         })}
       </div>
+      )}
       {transitionMutation.isError && (
         <div className="mt-3 text-[12px] text-destructive">{String(transitionMutation.error)}</div>
       )}
@@ -899,10 +1262,24 @@ function IssueCard({
   );
 }
 
-function CockpitView({
+function SessionPreview({ session }: { session: SessionSummary }) {
+  // A lightweight, throttled static preview from the persisted ring buffer —
+  // not a live xterm — so a fleet of tiles stays cheap (Slice 7).
+  const scrollbackQuery = useQuery({
+    queryKey: ["scrollback", session.id],
+    queryFn: () => getSessionScrollback(session.id),
+    refetchInterval: session.status === "exited" ? false : 4000,
+  });
+  const text = useMemo(() => previewText(scrollbackQuery.data ?? ""), [scrollbackQuery.data]);
+  return <pre className="tile-preview">{text || "…"}</pre>;
+}
+
+function SessionsView({
   sessions,
   focusedSessionId,
   loading,
+  error,
+  onRetry,
   onFocusSession,
   onOpenFeed,
   onChanged,
@@ -910,12 +1287,15 @@ function CockpitView({
   sessions: SessionSummary[];
   focusedSessionId: number | null;
   loading: boolean;
+  error: unknown;
+  onRetry: () => void;
   onFocusSession: (sessionId: number | null) => void;
   onOpenFeed: (sessionId: number) => void;
   onChanged: () => void;
 }) {
   const [statusFilter, setStatusFilter] = useState<SessionSummary["status"] | "all">("all");
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+  const [order, setOrder] = useState<number[]>(() => loadCockpitOrder());
   const liveSessions = sessions.filter((session) => session.status !== "exited");
   const filtered =
     statusFilter === "all"
@@ -923,12 +1303,32 @@ function CockpitView({
       : liveSessions.filter((session) => session.status === statusFilter);
   const groups = useMemo(() => groupSessionsByProject(filtered), [filtered]);
 
+  const orderedGroups = useMemo(() => {
+    const rank = (projectId: number) => {
+      const index = order.indexOf(projectId);
+      return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+    };
+    return [...groups].sort(
+      (a, b) => rank(a.projectId) - rank(b.projectId) || a.projectName.localeCompare(b.projectName),
+    );
+  }, [groups, order]);
+
+  const moveGroup = (projectId: number, direction: -1 | 1) => {
+    const ids = orderedGroups.map((group) => group.projectId);
+    const from = ids.indexOf(projectId);
+    const to = from + direction;
+    if (from === -1 || to < 0 || to >= ids.length) return;
+    [ids[from], ids[to]] = [ids[to], ids[from]];
+    setOrder(ids);
+    saveCockpitOrder(ids);
+  };
+
   return (
     <section className="view-surface">
       <div className="surface-header">
         <div>
-          <div className="label-caps">Cockpit</div>
-          <h2>Session fleet</h2>
+          <div className="label-caps">Sessions</div>
+          <h2>Sessions</h2>
           <p>{liveSessions.length} live Sessions</p>
         </div>
         <select
@@ -944,42 +1344,70 @@ function CockpitView({
         </select>
       </div>
 
-      {loading && <div className="empty-panel">Loading Sessions</div>}
-      {!loading && liveSessions.length === 0 && <div className="empty-panel">Nothing running</div>}
+      {error ? (
+        <QueryError error={error} onRetry={onRetry} label="Couldn't load Sessions" />
+      ) : loading ? (
+        <SkeletonRows rows={3} h={150} />
+      ) : liveSessions.length === 0 ? (
+        <div className="empty-panel">Nothing running</div>
+      ) : null}
 
       <div className="space-y-5">
-        {groups.map((group) => {
+        {orderedGroups.map((group, index) => {
           const isCollapsed = collapsed.has(group.projectId);
           const attention = group.sessions.filter((session) => session.status === "needs_input").length;
           return (
             <section key={group.projectId} className="fleet-group">
-              <button
-                type="button"
-                className="fleet-group-header"
-                onClick={() =>
-                  setCollapsed((current) => {
-                    const next = new Set(current);
-                    if (next.has(group.projectId)) next.delete(group.projectId);
-                    else next.add(group.projectId);
-                    return next;
-                  })
-                }
-              >
-                <span>{group.projectName}</span>
+              <div className="fleet-group-header">
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-2 border-0 bg-transparent text-left"
+                  onClick={() =>
+                    setCollapsed((current) => {
+                      const next = new Set(current);
+                      if (next.has(group.projectId)) next.delete(group.projectId);
+                      else next.add(group.projectId);
+                      return next;
+                    })
+                  }
+                >
+                  {isCollapsed ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}
+                  <span className="truncate">{group.projectName}</span>
+                </button>
                 <span className="flex items-center gap-2">
                   {group.sessions.length} live
                   {attention > 0 && <span className="needs-pill small">{attention} need input</span>}
-                  {isCollapsed ? <ChevronDown className="size-4" /> : <ChevronUp className="size-4" />}
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    title="Move group up"
+                    aria-label="Move group up"
+                    disabled={index === 0}
+                    onClick={() => moveGroup(group.projectId, -1)}
+                  >
+                    <ArrowUp />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    title="Move group down"
+                    aria-label="Move group down"
+                    disabled={index === orderedGroups.length - 1}
+                    onClick={() => moveGroup(group.projectId, 1)}
+                  >
+                    <ArrowDown />
+                  </Button>
                 </span>
-              </button>
+              </div>
               {!isCollapsed && (
                 <div className="cockpit-grid">
                   {sortSessions(group.sessions).map((session) => {
                     const expanded = focusedSessionId === session.id;
+                    const needsInput = session.status === "needs_input";
                     return (
                       <article
                         key={session.id}
-                        className={cn("session-tile", session.status === "needs_input" && "attention", expanded && "expanded")}
+                        className={cn("session-tile", needsInput && "attention", expanded && "expanded")}
                         style={projectStyle(session.projectColorIndex, session.projectColor)}
                       >
                         <div className="mb-2 flex items-center justify-between gap-3">
@@ -1000,8 +1428,9 @@ function CockpitView({
                             <Button
                               variant="ghost"
                               size="icon-xs"
-                              title="Open in Feed"
+                              title={needsInput ? "Open in Feed" : "Only Needs-Input Sessions enter the Feed"}
                               aria-label="Open in Feed"
+                              disabled={!needsInput}
                               onClick={() => onOpenFeed(session.id)}
                             >
                               <Maximize2 />
@@ -1018,12 +1447,11 @@ function CockpitView({
                           </div>
                         </div>
                         <div className={cn("tile-terminal", expanded && "expanded")}>
-                          <TerminalPane
-                            session={session}
-                            density={expanded ? "full" : "minimal"}
-                            readOnly={!expanded}
-                            onSessionChanged={onChanged}
-                          />
+                          {expanded ? (
+                            <TerminalPane session={session} density="full" onSessionChanged={onChanged} />
+                          ) : (
+                            <SessionPreview session={session} />
+                          )}
                         </div>
                       </article>
                     );
@@ -1041,16 +1469,20 @@ function CockpitView({
 function FeedView({
   sessions,
   issues,
+  reduceMotion,
+  dark,
   focusedSessionId,
   onFocusSession,
-  onOpenCockpit,
+  onOpenSessions,
   onChanged,
 }: {
   sessions: SessionSummary[];
   issues: Issue[];
+  reduceMotion: boolean;
+  dark: boolean;
   focusedSessionId: number | null;
   onFocusSession: (sessionId: number | null) => void;
-  onOpenCockpit: (sessionId: number) => void;
+  onOpenSessions: (sessionId: number) => void;
   onChanged: () => void;
 }) {
   const queue = sortSessions(sessions.filter(sessionNeedsInput));
@@ -1064,6 +1496,12 @@ function FeedView({
     enabled: Boolean(session),
   });
 
+  const advance = useCallback(() => {
+    onFocusSession(null);
+    setCursor((value) => Math.min(Math.max(queue.length - 2, 0), value));
+    onChanged();
+  }, [onFocusSession, onChanged, queue.length]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!event.metaKey && !event.ctrlKey) return;
@@ -1075,10 +1513,14 @@ function FeedView({
         event.preventDefault();
         setCursor((value) => Math.max(0, value - 1));
       }
+      if (event.key === "Enter" && session) {
+        event.preventDefault();
+        void setSessionStatus(session.id, "idle").then(advance);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [queue.length]);
+  }, [queue.length, session, advance]);
 
   useEffect(() => {
     if (focusedSessionId !== null && !queue.some((candidate) => candidate.id === focusedSessionId)) {
@@ -1089,21 +1531,20 @@ function FeedView({
   if (!session) {
     return (
       <section className="feed-empty">
-        <Shader disabled={false} subtle />
+        <Shader disabled={reduceMotion} subtle dark={dark} />
         <div className="empty-hero">
           <Inbox className="size-10" />
           <h2>Inbox zero</h2>
           <p>No Session needs input.</p>
+          <p className="mt-1 text-[12px] text-[var(--fg4)]">
+            Agents that need you will appear here, oldest first.
+          </p>
         </div>
       </section>
     );
   }
 
-  const advance = () => {
-    onFocusSession(null);
-    setCursor((value) => Math.min(Math.max(queue.length - 2, 0), value));
-    onChanged();
-  };
+  const upNext = queue.filter((candidate) => candidate.id !== session.id).length;
 
   return (
     <section className="feed-surface">
@@ -1146,35 +1587,40 @@ function FeedView({
           </section>
           <section>
             <div className="label-caps">Diff</div>
-            <pre className="diff-block">{diffQuery.data?.summary ?? "Loading diff"}</pre>
-            {diffQuery.data && (
-              <div className="mt-2 flex gap-2 font-mono text-[11px]">
-                <span>{diffQuery.data.changedFiles} files</span>
-                <span className="text-[var(--status-running)]">+{diffQuery.data.insertions}</span>
-                <span className="text-[var(--status-exited)]">-{diffQuery.data.deletions}</span>
-              </div>
-            )}
+            <DiffPanel
+              data={diffQuery.data}
+              isPending={diffQuery.isPending}
+              isError={diffQuery.isError}
+              error={diffQuery.error}
+              onRetry={() => void diffQuery.refetch()}
+            />
           </section>
-          <div className="feed-actions">
-            <Button variant="outline" onClick={() => setCursor((value) => Math.min(queue.length - 1, value + 1))}>
-              <ChevronDown />
-              Skip
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => void snoozeSession(session.id).then(advance)}
-            >
-              <Clock />
-              Snooze
-            </Button>
-            <Button variant="outline" onClick={() => onOpenCockpit(session.id)}>
-              <Gauge />
-              Cockpit
-            </Button>
-            <Button onClick={() => void setSessionStatus(session.id, "idle").then(advance)}>
-              <Check />
-              Done
-            </Button>
+          <div className="mt-auto space-y-2">
+            <div className="flex items-center justify-between text-[11px] text-[var(--fg4)]">
+              <span>{upNext > 0 ? `${upNext} more waiting` : "Last in queue"}</span>
+              <span className="flex items-center gap-1">
+                <Kbd>⌘↵</Kbd> done · <Kbd>⌘↑</Kbd>
+                <Kbd>⌘↓</Kbd> revisit
+              </span>
+            </div>
+            <div className="feed-actions">
+              <Button variant="outline" onClick={() => setCursor((value) => Math.min(queue.length - 1, value + 1))}>
+                <ChevronDown />
+                Skip
+              </Button>
+              <Button variant="outline" onClick={() => void snoozeSession(session.id).then(advance)}>
+                <Clock />
+                Snooze
+              </Button>
+              <Button variant="outline" onClick={() => onOpenSessions(session.id)}>
+                <Gauge />
+                Open in Sessions
+              </Button>
+              <Button onClick={() => void setSessionStatus(session.id, "idle").then(advance)}>
+                <Check />
+                Done
+              </Button>
+            </div>
           </div>
         </aside>
       </div>
@@ -1205,6 +1651,9 @@ function IssuePage({
     issue?.runnerOverrideId ?? "default",
   );
   const [workspaceStrategy, setWorkspaceStrategy] = useState(issue?.workspaceStrategy ?? "shared_checkout");
+  const [linearKey, setLinearKey] = useState(issue?.linearKey ?? "");
+  const [linearUrl, setLinearUrl] = useState(issue?.linearUrl ?? "");
+  const [commentDraft, setCommentDraft] = useState("");
 
   useEffect(() => {
     setActiveSessionId((current) => current ?? sessions[0]?.id ?? null);
@@ -1217,6 +1666,8 @@ function IssuePage({
     setStateType(issue.stateType);
     setRunnerOverrideId(issue.runnerOverrideId ?? "default");
     setWorkspaceStrategy(issue.workspaceStrategy);
+    setLinearKey(issue.linearKey ?? "");
+    setLinearUrl(issue.linearUrl ?? "");
   }, [issue]);
 
   const activeSession =
@@ -1232,6 +1683,11 @@ function IssuePage({
     queryFn: () => listIssueComments(issue?.id as number),
     enabled: Boolean(issue),
   });
+  const boardColumnsQuery = useQuery({
+    queryKey: ["board-columns", issue?.projectId],
+    queryFn: () => listBoardColumns(issue?.projectId as number),
+    enabled: Boolean(issue),
+  });
 
   const saveMutation = useMutation({
     mutationFn: updateIssue,
@@ -1240,6 +1696,14 @@ function IssuePage({
   const startMutation = useMutation({
     mutationFn: () => startSession(issue?.id as number),
     onSuccess: onChanged,
+  });
+  const commentMutation = useMutation({
+    mutationFn: (body: string) =>
+      createIssueComment({ issueId: issue?.id as number, body, author: "you" }),
+    onSuccess: () => {
+      setCommentDraft("");
+      void commentsQuery.refetch();
+    },
   });
 
   if (!issue) {
@@ -1252,6 +1716,16 @@ function IssuePage({
 
   const liveSessions = sessions.filter((session) => session.status !== "exited");
   const gitBacked = project?.gitBacked ?? true;
+  const latestSession = sessions.reduce<SessionSummary | null>(
+    (latest, session) => (latest === null || session.id > latest.id ? session : latest),
+    null,
+  );
+  const crashed = latestSession?.status === "exited" && (latestSession.exitCode ?? 0) !== 0;
+  const degraded = !gitBacked || crashed;
+  const columnLabel =
+    boardColumnsQuery.data?.find((column) => column.stateType === stateType)?.label ??
+    canonicalColumns.find((column) => column.stateType === stateType)?.label ??
+    stateType;
 
   return (
     <section className="issue-page">
@@ -1264,8 +1738,17 @@ function IssuePage({
           <div className="flex min-w-0 items-center gap-2">
             <ProjectChip projectLike={issue} />
             <h2 className="truncate">{issue.title}</h2>
+            <LinearChip linearKey={issue.linearKey} linearUrl={issue.linearUrl} />
+            {degraded && (
+              <span className="degraded-pill" title={crashed ? "A Session exited with an error" : "Non-git Workspace (degraded)"}>
+                <AlertCircle className="size-3" />
+                Degraded
+              </span>
+            )}
           </div>
-          <p>{issue.projectName} · {stateType}</p>
+          <p>
+            {issue.projectName} · {columnLabel} · {stateType}
+          </p>
         </div>
         <Button
           onClick={() => startMutation.mutate()}
@@ -1373,6 +1856,22 @@ function IssuePage({
               </option>
             </select>
             {!gitBacked && <div className="degraded-note">Git-only Workspace Strategy options are unavailable.</div>}
+            <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-2">
+              <input
+                value={linearKey}
+                onChange={(event) => setLinearKey(event.target.value)}
+                placeholder="LIN-123"
+                className="field font-mono"
+                aria-label="Linear key"
+              />
+              <input
+                value={linearUrl}
+                onChange={(event) => setLinearUrl(event.target.value)}
+                placeholder="Linear URL (display only)"
+                className="field"
+                aria-label="Linear URL"
+              />
+            </div>
             <Button
               onClick={() =>
                 saveMutation.mutate({
@@ -1382,6 +1881,8 @@ function IssuePage({
                   stateType,
                   runnerOverrideId: runnerOverrideId === "default" ? null : runnerOverrideId,
                   workspaceStrategy,
+                  linearKey,
+                  linearUrl,
                 })
               }
               disabled={saveMutation.isPending}
@@ -1406,20 +1907,56 @@ function IssuePage({
 
           <section className="tool-panel space-y-2">
             <div className="label-caps">Diff</div>
-            <pre className="diff-block">{diffQuery.data?.summary ?? "Loading diff"}</pre>
+            <DiffPanel
+              data={diffQuery.data}
+              isPending={diffQuery.isPending}
+              isError={diffQuery.isError}
+              error={diffQuery.error}
+              onRetry={() => void diffQuery.refetch()}
+            />
           </section>
 
           <section className="tool-panel space-y-2">
             <div className="label-caps">Comments</div>
-            {(commentsQuery.data ?? []).length === 0 && (
-              <div className="text-[12px] text-[var(--fg4)]">No comments</div>
+            <form
+              className="flex gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (commentDraft.trim()) commentMutation.mutate(commentDraft.trim());
+              }}
+            >
+              <input
+                value={commentDraft}
+                onChange={(event) => setCommentDraft(event.target.value)}
+                placeholder="Add a comment…"
+                className="field"
+              />
+              <Button type="submit" size="sm" disabled={!commentDraft.trim() || commentMutation.isPending}>
+                <MessageSquare />
+                Post
+              </Button>
+            </form>
+            {commentsQuery.isError ? (
+              <QueryError
+                error={commentsQuery.error}
+                onRetry={() => void commentsQuery.refetch()}
+                label="Couldn't load comments"
+              />
+            ) : commentsQuery.isPending ? (
+              <SkeletonRows rows={2} h={28} />
+            ) : (commentsQuery.data ?? []).length === 0 ? (
+              <div className="text-[12px] text-[var(--fg4)]">No comments yet.</div>
+            ) : (
+              (commentsQuery.data ?? []).slice(0, 8).map((comment) => (
+                <div key={comment.id} className="comment-row">
+                  <MessageSquare className="size-3.5" />
+                  <span className="min-w-0">
+                    <span className="mr-1.5 font-medium text-[var(--fg2)]">{comment.author}</span>
+                    {comment.body}
+                  </span>
+                </div>
+              ))
             )}
-            {(commentsQuery.data ?? []).slice(0, 5).map((comment) => (
-              <div key={comment.id} className="comment-row">
-                <MessageSquare className="size-3.5" />
-                <span>{comment.body}</span>
-              </div>
-            ))}
           </section>
         </aside>
       </div>
@@ -1431,12 +1968,16 @@ function RunnerPanel({
   runners,
   projects,
   loading,
+  error: loadError,
+  onRetry,
   onChanged,
   onClose,
 }: {
   runners: Runner[];
   projects: Project[];
   loading: boolean;
+  error: unknown;
+  onRetry: () => void;
   onChanged: () => void;
   onClose: () => void;
 }) {
@@ -1447,6 +1988,8 @@ function RunnerPanel({
   const [resumeCmd, setResumeCmd] = useState("");
   const [envJson, setEnvJson] = useState("{}");
   const [error, setError] = useState<string | null>(null);
+  const [reassignTo, setReassignTo] = useState<number | "">("");
+  const [deleting, setDeleting] = useState(false);
 
   const reset = () => {
     setEditing(null);
@@ -1456,18 +1999,13 @@ function RunnerPanel({
     setResumeCmd("");
     setEnvJson("{}");
     setError(null);
+    setReassignTo("");
   };
 
   const saveMutation = useMutation({
     mutationFn: () =>
       editing
-        ? updateRunner({
-            runnerId: editing.id,
-            name,
-            launchCmd,
-            resumeCmd,
-            envJson,
-          })
+        ? updateRunner({ runnerId: editing.id, name, launchCmd, resumeCmd, envJson })
         : createRunner({ kind, name, launchCmd, resumeCmd, envJson }),
     onSuccess: () => {
       reset();
@@ -1477,6 +2015,37 @@ function RunnerPanel({
   });
 
   const usedAsDefault = new Set(projects.map((project) => project.defaultRunnerId).filter(Boolean));
+  const affected = editing ? projects.filter((project) => project.defaultRunnerId === editing.id) : [];
+  const otherRunners = runners.filter((runner) => runner.id !== editing?.id);
+  const isLastRunner = runners.length <= 1;
+
+  // Reassign affected Projects' default Runner (server enforces ON DELETE
+  // RESTRICT) before deleting one that is in use, instead of just surfacing the
+  // raw refusal.
+  const handleDelete = async () => {
+    if (!editing) return;
+    setError(null);
+    setDeleting(true);
+    try {
+      if (affected.length > 0) {
+        const target = reassignTo === "" ? otherRunners[0]?.id : reassignTo;
+        if (!target) {
+          setError("Add another Runner before deleting this default.");
+          return;
+        }
+        for (const project of affected) {
+          await updateProject({ projectId: project.id, defaultRunnerId: target });
+        }
+      }
+      await deleteRunner(editing.id);
+      reset();
+      onChanged();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <aside className="runner-panel">
@@ -1490,28 +2059,35 @@ function RunnerPanel({
         </Button>
       </div>
 
-      {loading && <div className="empty-panel">Loading Runners</div>}
-      <div className="space-y-2">
-        {runners.map((runner) => (
-          <button
-            key={runner.id}
-            type="button"
-            className="runner-row"
-            onClick={() => {
-              setEditing(runner);
-              setKind(runner.kind);
-              setName(runner.name);
-              setLaunchCmd(runner.launchCmd);
-              setResumeCmd(runner.resumeCmd);
-              setEnvJson(runner.envJson);
-            }}
-          >
-            <span className="runner-kind">{runner.kind}</span>
-            <span className="min-w-0 flex-1 truncate">{runner.name}</span>
-            {usedAsDefault.has(runner.id) && <span className="count-pill">default</span>}
-          </button>
-        ))}
-      </div>
+      {loadError ? (
+        <QueryError error={loadError} onRetry={onRetry} label="Couldn't load Runners" />
+      ) : loading ? (
+        <SkeletonRows rows={3} h={34} />
+      ) : (
+        <div className="space-y-2">
+          {runners.map((runner) => (
+            <button
+              key={runner.id}
+              type="button"
+              className={cn("runner-row", editing?.id === runner.id && "active")}
+              onClick={() => {
+                setEditing(runner);
+                setKind(runner.kind);
+                setName(runner.name);
+                setLaunchCmd(runner.launchCmd);
+                setResumeCmd(runner.resumeCmd);
+                setEnvJson(runner.envJson);
+                setReassignTo("");
+                setError(null);
+              }}
+            >
+              <span className="runner-kind">{runner.kind}</span>
+              <span className="min-w-0 flex-1 truncate">{runner.name}</span>
+              {usedAsDefault.has(runner.id) && <span className="count-pill">default</span>}
+            </button>
+          ))}
+        </div>
+      )}
 
       <form
         className="mt-4 space-y-2"
@@ -1526,6 +2102,7 @@ function RunnerPanel({
           onChange={(event) => setKind(event.target.value as Runner["kind"])}
           className="field"
           disabled={Boolean(editing)}
+          title={editing ? "kind is immutable once a Runner is created" : undefined}
         >
           <option value="claude">claude</option>
           <option value="codex">codex</option>
@@ -1548,9 +2125,17 @@ function RunnerPanel({
           value={envJson}
           onChange={(event) => setEnvJson(event.target.value)}
           className="field min-h-20 font-mono"
+          placeholder="Env JSON (MARROW_*/TERM are reserved)"
         />
+        <div className="flex flex-wrap gap-1.5">
+          {["{{workspace}}", "{{issueFile}}", "{{branch}}", "{{resumeToken}}"].map((token) => (
+            <span key={token} className="token-hint" title="Shell-escaped before launch">
+              {token}
+            </span>
+          ))}
+        </div>
         {error && <div className="text-[12px] text-destructive">{error}</div>}
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button type="submit" disabled={!name.trim() || !launchCmd.trim() || saveMutation.isPending}>
             <Check />
             Save
@@ -1564,21 +2149,655 @@ function RunnerPanel({
             <Button
               type="button"
               variant="destructive"
-              onClick={() =>
-                void deleteRunner(editing.id)
-                  .then(() => {
-                    reset();
-                    onChanged();
-                  })
-                  .catch((err) => setError(String(err)))
-              }
+              onClick={() => void handleDelete()}
+              disabled={deleting || isLastRunner}
+              title={isLastRunner ? "Can't delete the last Runner" : undefined}
             >
               Delete
             </Button>
           )}
         </div>
+        {editing && affected.length > 0 && (
+          <div className="degraded-note space-y-2">
+            <div>
+              Default Runner for {affected.length} Project{affected.length > 1 ? "s" : ""}:{" "}
+              {affected.map((project) => project.name).join(", ")}. Reassign before deleting:
+            </div>
+            <select
+              value={reassignTo}
+              onChange={(event) => setReassignTo(event.target.value === "" ? "" : Number(event.target.value))}
+              className="field"
+            >
+              <option value="">{otherRunners[0] ? `Reassign to ${otherRunners[0].name}` : "No other Runner"}</option>
+              {otherRunners.map((runner) => (
+                <option key={runner.id} value={runner.id}>
+                  Reassign to {runner.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </form>
+
+      <ClaudeHookManager />
     </aside>
+  );
+}
+
+function ClaudeHookManager() {
+  const statusQuery = useQuery({ queryKey: ["claude-hook"], queryFn: claudeHookStatus });
+  const [error, setError] = useState<string | null>(null);
+  const install = useMutation({
+    mutationFn: installClaudeHook,
+    onSuccess: () => {
+      setError(null);
+      void statusQuery.refetch();
+    },
+    onError: (err) => setError(String(err)),
+  });
+  const remove = useMutation({
+    mutationFn: uninstallClaudeHook,
+    onSuccess: () => {
+      setError(null);
+      void statusQuery.refetch();
+    },
+    onError: (err) => setError(String(err)),
+  });
+  const status = statusQuery.data;
+
+  return (
+    <section className="hook-panel mt-4 space-y-2">
+      <div className="flex items-center gap-2">
+        <ShieldCheck className="size-3.5 text-[var(--status-running)]" />
+        <div className="label-caps">Claude attention hook</div>
+        {status?.installed && <span className="count-pill">installed</span>}
+      </div>
+      <p className="text-[12px] text-[var(--fg3)]">
+        Optionally add an additive <code className="token-hint">Stop</code> +{" "}
+        <code className="token-hint">Notification</code> hook to your global Claude config so Claude
+        Sessions auto-signal Needs Input. Nothing is written until you click Install; removing it
+        leaves the rest of your config untouched.
+      </p>
+      {status && (
+        <div className="truncate text-[11px] text-[var(--fg4)]" title={status.settingsPath}>
+          {status.settingsPath}
+        </div>
+      )}
+      {status && <pre className="hook-command">{status.command}</pre>}
+      {error && <div className="text-[12px] text-destructive">{error}</div>}
+      <div className="flex gap-2">
+        {status?.installed ? (
+          <Button variant="outline" size="sm" onClick={() => remove.mutate()} disabled={remove.isPending}>
+            Remove hook
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            onClick={() => install.mutate()}
+            disabled={install.isPending || statusQuery.isPending}
+          >
+            <ShieldCheck />
+            Install hook
+          </Button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+type SearchResult = {
+  kind: "project" | "issue";
+  id: number;
+  title: string;
+  subtitle: string;
+  snippet?: string;
+};
+
+/** Return a short window of `text` around the first match of `query`, ellipsized. */
+function matchSnippet(text: string, query: string): string | undefined {
+  if (!text) return undefined;
+  const idx = text.toLowerCase().indexOf(query);
+  if (idx === -1) return undefined;
+  const start = Math.max(0, idx - 24);
+  const end = Math.min(text.length, idx + query.length + 48);
+  return `${start > 0 ? "…" : ""}${text.slice(start, end).trim()}${end < text.length ? "…" : ""}`;
+}
+
+/**
+ * Global command-palette search (⌘K / ⌘F) over Projects and Issues — including
+ * the prompt/details text written into an Issue's description. Client-side over
+ * already-loaded data; selecting a result navigates to it.
+ */
+function GlobalSearch({
+  projects,
+  issues,
+  onClose,
+  onPickProject,
+  onPickIssue,
+}: {
+  projects: Project[];
+  issues: Issue[];
+  onClose: () => void;
+  onPickProject: (projectId: number) => void;
+  onPickIssue: (issueId: number) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const trimmed = query.trim().toLowerCase();
+
+  const results = useMemo<SearchResult[]>(() => {
+    if (!trimmed) return [];
+    const out: SearchResult[] = [];
+    for (const project of projects) {
+      if (`${project.name} ${project.path}`.toLowerCase().includes(trimmed)) {
+        out.push({ kind: "project", id: project.id, title: project.name, subtitle: project.path });
+      }
+    }
+    for (const issue of issues) {
+      if (`${issue.title} ${issue.description} ${issue.projectName}`.toLowerCase().includes(trimmed)) {
+        out.push({
+          kind: "issue",
+          id: issue.id,
+          title: issue.title,
+          subtitle: `${issue.projectName} · ${issue.stateType}`,
+          snippet: matchSnippet(issue.description, trimmed),
+        });
+      }
+    }
+    return out.slice(0, 40);
+  }, [trimmed, projects, issues]);
+
+  useEffect(() => {
+    setActive(0);
+  }, [trimmed]);
+
+  const choose = (result: SearchResult) => {
+    if (result.kind === "project") onPickProject(result.id);
+    else onPickIssue(result.id);
+  };
+  const optionId = (result: SearchResult) => `gsr-${result.kind}-${result.id}`;
+
+  return (
+    <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="modal-overlay" />
+        <Dialog.Content className="modal-panel search-palette" aria-describedby={undefined}>
+          <Dialog.Title className="sr-only">Search Issues, Projects, and prompts</Dialog.Title>
+          <div className="search-palette-input">
+            <Search className="size-4 shrink-0 text-[var(--fg4)]" />
+            <input
+              autoFocus
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search Issues, Projects, and prompts…"
+              role="combobox"
+              aria-expanded={results.length > 0}
+              aria-controls="global-search-results"
+              aria-activedescendant={results[active] ? optionId(results[active]) : undefined}
+              aria-label="Search Issues, Projects, and prompts"
+              onKeyDown={(event) => {
+                // Keep our nav keys from leaking to FeedView's window keydown
+                // listener (which is a native listener outside React's root).
+                if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter") {
+                  event.nativeEvent.stopPropagation();
+                }
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  if (results.length === 0) return;
+                  setActive((value) => Math.min(results.length - 1, value + 1));
+                } else if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  if (results.length === 0) return;
+                  setActive((value) => Math.max(0, value - 1));
+                } else if (event.key === "Enter" && !event.metaKey && !event.ctrlKey) {
+                  event.preventDefault();
+                  const result = results[active];
+                  if (result) choose(result);
+                }
+              }}
+            />
+            <Kbd>esc</Kbd>
+          </div>
+          <span className="sr-only" aria-live="polite">
+            {trimmed ? `${results.length} result${results.length === 1 ? "" : "s"}` : ""}
+          </span>
+          <div className="search-palette-results" id="global-search-results" role="listbox" aria-label="Search results">
+            {!trimmed ? (
+              <div className="search-hint">
+                Search across Issue titles, prompts &amp; details, and Project names.
+              </div>
+            ) : results.length === 0 ? (
+              <div className="search-hint">No matches for “{query.trim()}”.</div>
+            ) : (
+              results.map((result, index) => (
+                <button
+                  key={`${result.kind}-${result.id}`}
+                  id={optionId(result)}
+                  role="option"
+                  aria-selected={index === active}
+                  type="button"
+                  className={cn("search-result", index === active && "active")}
+                  onMouseEnter={() => setActive(index)}
+                  onClick={() => choose(result)}
+                >
+                  <span className="search-result-icon">
+                    {result.kind === "project" ? (
+                      <FolderGit2 className="size-4" />
+                    ) : (
+                      <Inbox className="size-4" />
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="truncate font-medium text-[var(--fg1)]">{result.title}</span>
+                      <span className="search-result-kind">{result.kind}</span>
+                    </span>
+                    <span className="block truncate text-[11px] text-[var(--fg4)]">{result.subtitle}</span>
+                    {result.snippet && (
+                      <span className="block truncate text-[11px] text-[var(--fg3)]">{result.snippet}</span>
+                    )}
+                  </span>
+                  <CornerDownLeft className="enter-hint size-3.5 shrink-0 text-[var(--fg4)]" />
+                </button>
+              ))
+            )}
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+// The fixed loopback redirect the user registers on their Linear OAuth app.
+// With no embedded server we read the `code` back by manual paste (see dialog).
+const LINEAR_OAUTH_REDIRECT = "http://localhost:3939/callback";
+
+/** Connect / manage the workspace-level Linear connection (API key or OAuth). */
+function LinearConnectDialog({
+  open,
+  connection,
+  onOpenChange,
+  onChanged,
+}: {
+  open: boolean;
+  connection: LinearConnection | null;
+  onOpenChange: (open: boolean) => void;
+  onChanged: () => void;
+}) {
+  const [method, setMethod] = useState<"api_key" | "oauth">("api_key");
+  const [apiKey, setApiKey] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const connected = Boolean(connection?.connected);
+
+  // Don't carry a failed attempt's error or half-typed secrets into the next open.
+  useEffect(() => {
+    if (!open) {
+      setApiKey("");
+      setClientSecret("");
+      setCode("");
+      setError(null);
+    }
+  }, [open]);
+
+  const connectApiKey = useMutation({
+    mutationFn: () => linearConnectApiKey(apiKey.trim()),
+    onSuccess: () => {
+      setApiKey("");
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => setError(String(err)),
+  });
+  const completeOauth = useMutation({
+    mutationFn: () =>
+      linearCompleteOauth({ clientId: clientId.trim(), clientSecret: clientSecret.trim(), code: code.trim() }),
+    onSuccess: () => {
+      setCode("");
+      setClientSecret("");
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => setError(String(err)),
+  });
+  const disconnect = useMutation({
+    mutationFn: linearDisconnect,
+    onSuccess: () => {
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => setError(String(err)),
+  });
+
+  const authorize = async () => {
+    setError(null);
+    try {
+      const url = await linearAuthorizeUrl({ clientId: clientId.trim() });
+      await openExternal(url);
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="modal-overlay" />
+        <Dialog.Content className="modal-panel linear-dialog" aria-describedby={undefined}>
+          <div className="modal-head">
+            <div className="flex items-center gap-2">
+              <LinearGlyph />
+              <Dialog.Title className="modal-title">Linear</Dialog.Title>
+              {connected && <span className="count-pill">connected</span>}
+            </div>
+            <Dialog.Close asChild>
+              <Button variant="ghost" size="icon-sm" aria-label="Close">
+                <X />
+              </Button>
+            </Dialog.Close>
+          </div>
+
+          {connected ? (
+            <div className="space-y-3">
+              <div className="context-row">
+                <Globe className="size-3.5" />
+                {connection?.workspaceName ?? "Linear workspace"}
+              </div>
+              <div className="text-[12px] text-[var(--fg3)]">
+                Connected via {connection?.method === "oauth" ? "OAuth" : "API key"}. Link a Project to a Linear
+                Project from its sidebar menu to import Issues.
+              </div>
+              {error && <div className="text-[12px] text-destructive">{error}</div>}
+              <Button variant="destructive" onClick={() => disconnect.mutate()} disabled={disconnect.isPending}>
+                <Unlink />
+                Disconnect
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="segmented w-full" role="group" aria-label="Connection method">
+                <button
+                  type="button"
+                  aria-pressed={method === "api_key"}
+                  className={cn("flex-1", method === "api_key" && "active")}
+                  onClick={() => setMethod("api_key")}
+                >
+                  API key
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={method === "oauth"}
+                  className={cn("flex-1", method === "oauth" && "active")}
+                  onClick={() => setMethod("oauth")}
+                >
+                  OAuth (browser)
+                </button>
+              </div>
+
+              {method === "api_key" ? (
+                <form
+                  className="space-y-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (apiKey.trim()) connectApiKey.mutate();
+                  }}
+                >
+                  <p className="text-[12px] text-[var(--fg3)]">
+                    Create a personal API key in Linear → Settings → Security &amp; access → Personal API keys, then
+                    paste it here. Stored locally on this machine only.
+                  </p>
+                  <label className="search-field linear-key-field">
+                    <KeyRound className="size-3.5" />
+                    <input
+                      type="password"
+                      value={apiKey}
+                      onChange={(event) => setApiKey(event.target.value)}
+                      placeholder="lin_api_…"
+                      aria-label="Linear API key"
+                    />
+                  </label>
+                  {error && <div className="text-[12px] text-destructive">{error}</div>}
+                  <Button type="submit" disabled={!apiKey.trim() || connectApiKey.isPending}>
+                    {connectApiKey.isPending ? <LoaderCircle className="animate-spin" /> : <Plug />}
+                    Connect
+                  </Button>
+                </form>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-[12px] text-[var(--fg3)]">
+                    Create an OAuth application in Linear → Settings → API → OAuth applications with redirect URI{" "}
+                    <code className="token-hint">{LINEAR_OAUTH_REDIRECT}</code>, then authorize below. After approving,
+                    copy the <em>entire URL</em> from the address bar (it carries the code and a one-time security
+                    token) and paste it below.
+                  </p>
+                  <input
+                    value={clientId}
+                    onChange={(event) => setClientId(event.target.value)}
+                    placeholder="Client ID"
+                    className="field font-mono"
+                    aria-label="Linear OAuth client ID"
+                  />
+                  <Button variant="outline" onClick={() => void authorize()} disabled={!clientId.trim()}>
+                    <ExternalLink />
+                    Authorize in browser
+                  </Button>
+                  <input
+                    value={clientSecret}
+                    onChange={(event) => setClientSecret(event.target.value)}
+                    placeholder="Client secret"
+                    type="password"
+                    className="field font-mono"
+                    aria-label="Linear OAuth client secret"
+                  />
+                  <input
+                    value={code}
+                    onChange={(event) => setCode(event.target.value)}
+                    placeholder="Paste the full redirect URL"
+                    className="field font-mono"
+                    aria-label="Linear redirect URL"
+                  />
+                  {error && <div className="text-[12px] text-destructive">{error}</div>}
+                  <Button
+                    onClick={() => completeOauth.mutate()}
+                    disabled={!clientId.trim() || !clientSecret.trim() || !code.trim() || completeOauth.isPending}
+                  >
+                    {completeOauth.isPending ? <LoaderCircle className="animate-spin" /> : <Check />}
+                    Complete connection
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+/** Link a single Project to a Linear Project and import its Issues. */
+function LinearLinkDialog({
+  project,
+  connected,
+  onClose,
+  onConnect,
+  onChanged,
+}: {
+  project: Project | null;
+  connected: boolean;
+  onClose: () => void;
+  onConnect: () => void;
+  onChanged: () => void;
+}) {
+  const [selected, setSelected] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const [imported, setImported] = useState<number | null>(null);
+  const open = project !== null;
+
+  const projectsQuery = useQuery({
+    queryKey: ["linear-projects"],
+    queryFn: linearListProjects,
+    enabled: open && connected,
+  });
+  const linearProjects = projectsQuery.data ?? [];
+
+  useEffect(() => {
+    if (open) {
+      setSelected("");
+      setError(null);
+      setImported(null);
+    }
+  }, [open, project?.id]);
+
+  const linkAndImport = useMutation({
+    mutationFn: async () => {
+      if (!project) return { imported: 0 };
+      const chosen = linearProjects.find((candidate) => candidate.id === selected);
+      await linearLinkProject({
+        projectId: project.id,
+        linearProjectId: selected,
+        linearProjectName: chosen?.name ?? null,
+        linearKey: chosen?.teamKey ?? chosen?.name ?? null,
+        linearUrl: chosen?.url ?? null,
+      });
+      return linearImportIssues({ projectId: project.id });
+    },
+    onSuccess: (result) => {
+      setImported(result.imported);
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => setError(String(err)),
+  });
+  const reimport = useMutation({
+    mutationFn: () => linearImportIssues({ projectId: project?.id as number }),
+    onSuccess: (result) => {
+      setImported(result.imported);
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => setError(String(err)),
+  });
+  const unlink = useMutation({
+    mutationFn: () => linearUnlinkProject({ projectId: project?.id as number }),
+    onSuccess: () => {
+      setError(null);
+      setImported(null);
+      onChanged();
+    },
+    onError: (err) => setError(String(err)),
+  });
+
+  const alreadyLinked = Boolean(project?.linearKey || project?.linearUrl);
+
+  return (
+    <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="modal-overlay" />
+        <Dialog.Content className="modal-panel linear-dialog" aria-describedby={undefined}>
+          <div className="modal-head">
+            <div className="flex min-w-0 items-center gap-2">
+              <LinearGlyph />
+              <Dialog.Title className="modal-title truncate">
+                Linear · {project?.name ?? "Project"}
+              </Dialog.Title>
+            </div>
+            <Dialog.Close asChild>
+              <Button variant="ghost" size="icon-sm" aria-label="Close">
+                <X />
+              </Button>
+            </Dialog.Close>
+          </div>
+
+          {!connected ? (
+            <div className="space-y-3">
+              <p className="text-[12px] text-[var(--fg3)]">
+                Connect your Linear workspace first, then link this Project to a Linear Project and import its Issues.
+              </p>
+              <Button onClick={onConnect}>
+                <Plug />
+                Connect Linear
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {alreadyLinked && (
+                <div className="context-row">
+                  <Link2 className="size-3.5" />
+                  Linked to {project?.linearKey ?? project?.linearUrl}
+                </div>
+              )}
+              {projectsQuery.isError ? (
+                <QueryError
+                  error={projectsQuery.error}
+                  onRetry={() => void projectsQuery.refetch()}
+                  label="Couldn't load Linear Projects"
+                />
+              ) : projectsQuery.isPending ? (
+                <SkeletonRows rows={3} h={32} />
+              ) : (
+                <select
+                  value={selected}
+                  onChange={(event) => setSelected(event.target.value)}
+                  className="field"
+                  aria-label="Linear Project"
+                >
+                  <option value="">Select a Linear Project…</option>
+                  {linearProjects.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>
+                      {candidate.teamName ? `${candidate.teamName} · ` : ""}
+                      {candidate.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {imported !== null && (
+                <div className="text-[12px] text-[var(--status-running)]">
+                  Synced {imported} Issue(s) from Linear.
+                </div>
+              )}
+              {error && <div className="text-[12px] text-destructive">{error}</div>}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  onClick={() => linkAndImport.mutate()}
+                  disabled={!selected || linkAndImport.isPending}
+                >
+                  {linkAndImport.isPending ? <LoaderCircle className="animate-spin" /> : <Link2 />}
+                  Link &amp; import Issues
+                </Button>
+                {alreadyLinked && (
+                  <Button variant="outline" onClick={() => reimport.mutate()} disabled={reimport.isPending}>
+                    {reimport.isPending ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
+                    Re-import
+                  </Button>
+                )}
+                {alreadyLinked && (
+                  <Button variant="destructive" onClick={() => unlink.mutate()} disabled={unlink.isPending}>
+                    <Unlink />
+                    Unlink
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+/** Small Linear-style glyph for the connect dialogs. */
+function LinearGlyph() {
+  return (
+    <span className="linear-glyph" aria-hidden>
+      <svg viewBox="0 0 100 100" width="14" height="14">
+        <path
+          fill="currentColor"
+          d="M1.2 61.4a1 1 0 0 1 1.7-.5l36.2 36.2a1 1 0 0 1-.5 1.7C20.6 95.6 4.4 79.4 1.2 61.4Zm-.9-15.8a1 1 0 0 0 .3.8l53 53a1 1 0 0 0 .8.3 49.6 49.6 0 0 0 8.9-1.7 1 1 0 0 0 .4-1.7L3.7 36.3a1 1 0 0 0-1.7.4 49.6 49.6 0 0 0-1.7 8.9ZM6.7 26a1 1 0 0 0 .2 1.2l65.9 65.9a1 1 0 0 0 1.2.2 50.3 50.3 0 0 0 6.5-4.2 1 1 0 0 0 .1-1.5L12.4 19.3a1 1 0 0 0-1.5.1 50.3 50.3 0 0 0-4.2 6.5ZM21 12a1 1 0 0 0 0 1.4l65.6 65.6a1 1 0 0 0 1.4 0A50 50 0 0 0 21 12Z"
+        />
+      </svg>
+    </span>
   );
 }
 
@@ -1643,29 +2862,88 @@ function SessionStatusPill({ status }: { status: SessionSummary["status"] }) {
   );
 }
 
-function Shader({ disabled, subtle = false }: { disabled: boolean; subtle?: boolean }) {
-  const [pos, setPos] = useState({ x: 50, y: 30 });
-  useEffect(() => {
-    if (disabled) return undefined;
-    const onPointerMove = (event: PointerEvent) => {
-      setPos({
-        x: (event.clientX / window.innerWidth) * 100,
-        y: (event.clientY / window.innerHeight) * 100,
-      });
-    };
-    window.addEventListener("pointermove", onPointerMove);
-    return () => window.removeEventListener("pointermove", onPointerMove);
-  }, [disabled]);
-  if (disabled) return <div className="shader-fallback" />;
+function Skeleton({ h = 14, w = "100%" }: { h?: number; w?: number | string }) {
+  return <div className="skeleton" style={{ height: h, width: w } as CSSProperties} aria-hidden />;
+}
+
+function SkeletonRows({ rows = 3, h = 44 }: { rows?: number; h?: number }) {
   return (
-    <div
-      className={cn("shader", subtle && "subtle")}
-      style={{
-        "--shader-x": `${pos.x}%`,
-        "--shader-y": `${pos.y}%`,
-      } as CSSProperties}
-    />
+    <div className="space-y-2" aria-busy="true" aria-label="Loading">
+      {Array.from({ length: rows }).map((_, index) => (
+        <Skeleton key={index} h={h} />
+      ))}
+    </div>
   );
+}
+
+function QueryError({
+  error,
+  onRetry,
+  label = "Couldn't load",
+}: {
+  error: unknown;
+  onRetry: () => void;
+  label?: string;
+}) {
+  return (
+    <div className="query-error" role="alert">
+      <span className="flex min-w-0 items-center gap-1.5">
+        <AlertCircle className="size-3.5 shrink-0" />
+        <span className="truncate">
+          {label}: {String((error as Error)?.message ?? error)}
+        </span>
+      </span>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        <RefreshCw className="size-3.5" />
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+function DiffPanel({
+  data,
+  isPending,
+  isError,
+  error,
+  onRetry,
+}: {
+  data?: WorkspaceDiff;
+  isPending: boolean;
+  isError: boolean;
+  error: unknown;
+  onRetry: () => void;
+}) {
+  if (isError) return <QueryError error={error} onRetry={onRetry} label="Couldn't load diff" />;
+  if (isPending) return <Skeleton h={72} />;
+  if (!data) return null;
+  if (!data.gitBacked) {
+    return <div className="degraded-note">Not a git Workspace — diff is unavailable.</div>;
+  }
+  return (
+    <>
+      <pre className="diff-block">{data.summary}</pre>
+      <div className="mt-2 flex gap-2 font-mono text-[11px]">
+        <span>{data.changedFiles} files</span>
+        <span className="text-[var(--status-running)]">+{data.insertions}</span>
+        <span className="text-[var(--status-exited)]">-{data.deletions}</span>
+      </div>
+    </>
+  );
+}
+
+/** Compact one-line representation of a Linear key as a (display-only) chip. */
+function LinearChip({ linearKey, linearUrl }: { linearKey: string | null; linearUrl: string | null }) {
+  if (!linearKey && !linearUrl) return null;
+  const label = linearKey ?? "Linear";
+  if (linearUrl) {
+    return (
+      <a className="linear-chip" href={linearUrl} target="_blank" rel="noreferrer" title={linearUrl}>
+        {label}
+      </a>
+    );
+  }
+  return <span className="linear-chip">{label}</span>;
 }
 
 function normalizeColumns(columns?: BoardColumn[]) {
@@ -1718,6 +2996,60 @@ function sortSessions(sessions: SessionSummary[]) {
     if (aNeeds !== bNeeds) return aNeeds - bNeeds;
     return Date.parse(a.needsInputSince ?? a.startedAt) - Date.parse(b.needsInputSince ?? b.startedAt);
   });
+}
+
+const COCKPIT_ORDER_KEY = "marrow:cockpit-order";
+
+function loadCockpitOrder(): number[] {
+  try {
+    const raw = localStorage.getItem(COCKPIT_ORDER_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(parsed) ? parsed.filter((value): value is number => typeof value === "number") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCockpitOrder(order: number[]) {
+  try {
+    localStorage.setItem(COCKPIT_ORDER_KEY, JSON.stringify(order));
+  } catch {
+    // localStorage may be unavailable; ordering is a nicety, not load-bearing.
+  }
+}
+
+const PINNED_PROJECTS_KEY = "marrow:pinned-projects";
+
+function loadPinnedProjects(): Set<number> {
+  try {
+    const raw = localStorage.getItem(PINNED_PROJECTS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return new Set(
+      Array.isArray(parsed) ? parsed.filter((value): value is number => typeof value === "number") : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function savePinnedProjects(pinned: Set<number>) {
+  try {
+    localStorage.setItem(PINNED_PROJECTS_KEY, JSON.stringify([...pinned]));
+  } catch {
+    // localStorage may be unavailable; pinning is a nicety, not load-bearing.
+  }
+}
+
+/** Strip ANSI/control noise from raw PTY scrollback and keep the last lines. */
+function previewText(raw: string): string {
+  const clean = raw
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "") // OSC sequences
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "") // CSI sequences
+    .replace(/\u001b[@-Z\\-_]/g, "") // other escape sequences
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ""); // stray control bytes (keep \n, \t)
+  const lines = clean.split("\n").map((line) => line.replace(/\s+$/g, ""));
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+  return lines.slice(-14).join("\n");
 }
 
 function sessionNeedsInput(session: SessionSummary) {

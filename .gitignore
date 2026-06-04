@@ -28,3 +28,6 @@ src-tauri/target
 *.njsproj
 *.sln
 *.sw?
+
+# Claude Code scheduled-task runtime lock
+.claude/scheduled_tasks.lock

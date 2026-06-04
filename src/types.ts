@@ -10,6 +10,8 @@ export interface Project {
   defaultWorkspaceStrategy: string;
   color: string;
   colorIndex: number;
+  linearUrl: string | null;
+  linearKey: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -43,6 +45,8 @@ export interface Issue {
   runnerOverride: string | null;
   runnerOverrideId: number | null;
   workspaceStrategy: string;
+  linearUrl: string | null;
+  linearKey: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -116,4 +120,29 @@ export interface IssueComment {
   createdAt: string;
 }
 
-export type ViewMode = "board" | "cockpit" | "feed";
+export interface ClaudeHookStatus {
+  installed: boolean;
+  settingsPath: string;
+  settingsExists: boolean;
+  command: string;
+}
+
+export type ViewMode = "board" | "sessions" | "feed";
+
+export interface LinearConnection {
+  connected: boolean;
+  method: "api_key" | "oauth" | null;
+  workspaceName: string | null;
+}
+
+export interface LinearProject {
+  id: string;
+  name: string;
+  teamName: string | null;
+  teamKey: string | null;
+  url: string | null;
+}
+
+export interface LinearImportResult {
+  imported: number;
+}

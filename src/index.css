@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -90,9 +91,10 @@
   --status-running: #0c9f45;
   --status-running-glow: rgb(12 159 69 / 0.35);
   --status-running-bg: rgb(12 159 69 / 0.1);
-  --status-needs-input: #00a3c7;
-  --status-needs-input-glow: rgb(0 163 199 / 0.44);
-  --status-needs-input-bg: rgb(0 163 199 / 0.12);
+  /* Alert color (Needs Input) — committed default is warm amber (Slice 13). */
+  --status-needs-input: #b26b00;
+  --status-needs-input-glow: rgb(178 107 0 / 0.42);
+  --status-needs-input-bg: rgb(178 107 0 / 0.12);
   --status-idle: #5318c9;
   --status-idle-stroke: #7c3aed;
   --status-idle-glow: rgb(83 24 201 / 0.32);
@@ -101,7 +103,7 @@
   --status-exited-glow: rgb(220 38 38 / 0.3);
   --status-exited-bg: rgb(220 38 38 / 0.1);
 
-  --font-code: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --font-code: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   --radius: 8px;
   --r-4: 4px;
   --r-8: 8px;
@@ -110,13 +112,14 @@
   --shadow-glass-lifted: 0 16px 42px -20px rgb(0 0 0 / 0.28), 0 1px 0 0 var(--inset-highlight) inset;
   --shadow-working: 0 1px 2px 0 rgb(0 0 0 / 0.12);
   --shadow-needs-input: 0 0 0 1px var(--status-needs-input), 0 0 24px -4px var(--status-needs-input-glow);
-  --shadow-focus: 0 0 0 2px rgb(0 163 199 / 0.35);
+  /* Follows the active alert token (and theme) instead of a fixed hue. */
+  --shadow-focus: 0 0 0 2px color-mix(in srgb, var(--status-needs-input) 38%, transparent);
   --ease-out-expo: cubic-bezier(0.32, 0.72, 0, 1);
   --ease-toggle: cubic-bezier(0.4, 0, 0.2, 1);
   --dur-hover: 120ms;
   --dur-toggle: 220ms;
   --dur-page: 320ms;
-  --blur-glass: blur(22px) saturate(140%);
+  --blur-glass: blur(24px) saturate(140%);
   --blur-glass-reduced: blur(8px) saturate(120%);
   --sidebar-w: 240px;
   --topbar-h: 44px;
@@ -178,9 +181,10 @@
   --status-running: #79fa87;
   --status-running-glow: rgb(121 250 135 / 0.55);
   --status-running-bg: rgb(121 250 135 / 0.1);
-  --status-needs-input: #00d9ff;
-  --status-needs-input-glow: rgb(0 217 255 / 0.6);
-  --status-needs-input-bg: rgb(0 217 255 / 0.12);
+  /* Alert color (Needs Input) — committed default is warm amber (Slice 13). */
+  --status-needs-input: #f5a524;
+  --status-needs-input-glow: rgb(245 165 36 / 0.6);
+  --status-needs-input-bg: rgb(245 165 36 / 0.14);
   --status-idle: #5318c9;
   --status-idle-stroke: #8b5cf6;
   --status-idle-glow: rgb(83 24 201 / 0.55);
@@ -412,6 +416,32 @@
   flex: 1;
   overflow: auto;
   padding: 0 8px 10px;
+}
+
+.sidebar-group {
+  margin-top: 6px;
+}
+
+.sidebar-group-header {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 5px 6px;
+  color: var(--fg4);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.sidebar-group-header:hover {
+  color: var(--fg2);
 }
 
 .main-surface {
@@ -679,6 +709,10 @@ textarea.field {
 }
 
 .issue-card.needs {
+  /* The Needs-Input card border is an intentional fixed multi-hue gradient
+     (Marrow's signature), deliberately independent of the alert treatment — it
+     does NOT follow amber/cyan/rainbow. Only the glow below uses the alert
+     token. Leave the gradient as-is unless you mean to retheme the card. */
   background:
     linear-gradient(var(--bg-working-elev), var(--bg-working-elev)) padding-box,
     linear-gradient(135deg, #da8c6b, #d930b1, #8844d8, #4e52f4, #87f3ff) border-box;
@@ -785,6 +819,20 @@ textarea.field {
 
 .tile-terminal.expanded {
   height: 360px;
+}
+
+.tile-preview {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: #0e0e10;
+  padding: 8px 9px;
+  color: var(--fg3);
+  font: 400 10.5px/14px var(--font-code);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .terminal-frame {
@@ -901,6 +949,10 @@ textarea.field {
 .empty-hero {
   position: relative;
   z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   color: var(--fg2);
   text-align: center;
 }
@@ -943,7 +995,8 @@ textarea.field {
   cursor: pointer;
 }
 
-.session-tabs button.active {
+.session-tabs button.active,
+.runner-row.active {
   border-color: var(--status-needs-input);
   color: var(--fg1);
   box-shadow: var(--shadow-focus);
@@ -955,6 +1008,46 @@ textarea.field {
   padding: 7px 8px;
   color: var(--status-exited);
   font-size: 12px;
+}
+
+.degraded-pill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  padding: 2px 7px;
+  background: var(--status-exited-bg);
+  color: var(--status-exited);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.hook-panel {
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.04);
+  padding: 10px;
+}
+
+.hook-command {
+  overflow-x: auto;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 0.28);
+  padding: 7px 8px;
+  color: var(--fg2);
+  font: 500 10.5px/15px var(--font-code);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.token-hint {
+  display: inline-block;
+  border-radius: 5px;
+  background: rgb(255 255 255 / 0.06);
+  padding: 1px 5px;
+  color: var(--fg3);
+  font: 500 10.5px/15px var(--font-code);
 }
 
 .comment-row {
@@ -984,36 +1077,135 @@ textarea.field {
   font-family: var(--font-code);
 }
 
-.shader,
-.shader-fallback {
+.shader-canvas {
   pointer-events: none;
   position: absolute;
   inset: 0;
   z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-.shader {
-  background:
-    radial-gradient(circle at var(--shader-x) var(--shader-y), color-mix(in srgb, var(--project-6) 34%, transparent), transparent 26rem),
-    radial-gradient(circle at 18% 72%, color-mix(in srgb, var(--project-1) 24%, transparent), transparent 24rem),
-    radial-gradient(circle at 82% 28%, color-mix(in srgb, var(--project-3) 18%, transparent), transparent 22rem),
-    var(--bg-shell);
-  filter: saturate(130%);
-  transition: background-position 120ms var(--ease-toggle);
+/* ── Alert-color treatments (Slice 13). Default is amber (the base tokens);
+   .alert-cyan / .alert-rainbow are opt-in overrides applied to <html>. ── */
+
+/* Register the Needs-Input accent tokens as animatable colors (Houdini @property)
+   so .alert-rainbow can hue-cycle them globally. Webviews without @property keep
+   the static color declared on .alert-rainbow below (magenta, never orange). */
+@property --status-needs-input {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #f5a524;
+}
+@property --status-needs-input-glow {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(245 165 36 / 0.6);
+}
+@property --status-needs-input-bg {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(245 165 36 / 0.14);
 }
 
-.shader.subtle {
+.alert-cyan {
+  --status-needs-input: #00a3c7;
+  --status-needs-input-glow: rgb(0 163 199 / 0.44);
+  --status-needs-input-bg: rgb(0 163 199 / 0.12);
+}
+.dark.alert-cyan {
+  --status-needs-input: #00d9ff;
+  --status-needs-input-glow: rgb(0 217 255 / 0.6);
+  --status-needs-input-bg: rgb(0 217 255 / 0.12);
+}
+.alert-rainbow {
+  --status-needs-input: #c026d3;
+  --status-needs-input-glow: rgb(192 38 211 / 0.5);
+  --status-needs-input-bg: rgb(192 38 211 / 0.14);
+}
+.dark.alert-rainbow {
+  --status-needs-input: #e879f9;
+  --status-needs-input-glow: rgb(232 121 249 / 0.55);
+  --status-needs-input-bg: rgb(232 121 249 / 0.16);
+}
+/* The rainbow treatment hue-cycles the Needs-Input accent token itself, so every
+   surface that reads --status-needs-input (attention pips, status dots, the
+   "needs input" pills, Issue-card / Session-tile accents, focus rings and glows)
+   cycles together — instead of only a couple of hand-listed elements. */
+.alert-rainbow {
+  animation: alert-rainbow-token 6s linear infinite;
+}
+@keyframes alert-rainbow-token {
+  0%   { --status-needs-input: #ff6b6b; --status-needs-input-glow: rgb(255 107 107 / 0.55); --status-needs-input-bg: rgb(255 107 107 / 0.16); }
+  20%  { --status-needs-input: #ffd23f; --status-needs-input-glow: rgb(255 210 63 / 0.55); --status-needs-input-bg: rgb(255 210 63 / 0.16); }
+  40%  { --status-needs-input: #6bf7a0; --status-needs-input-glow: rgb(107 247 160 / 0.55); --status-needs-input-bg: rgb(107 247 160 / 0.16); }
+  60%  { --status-needs-input: #4ea8ff; --status-needs-input-glow: rgb(78 168 255 / 0.55); --status-needs-input-bg: rgb(78 168 255 / 0.16); }
+  80%  { --status-needs-input: #e879f9; --status-needs-input-glow: rgb(232 121 249 / 0.55); --status-needs-input-bg: rgb(232 121 249 / 0.16); }
+  100% { --status-needs-input: #ff6b6b; --status-needs-input-glow: rgb(255 107 107 / 0.55); --status-needs-input-bg: rgb(255 107 107 / 0.16); }
+}
+
+/* ── Skeleton loaders (Slice 14) ── */
+.skeleton {
+  border-radius: 8px;
+  background: linear-gradient(
+    100deg,
+    var(--bg-glass-hover) 30%,
+    var(--bg-glass-strong) 50%,
+    var(--bg-glass-hover) 70%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.3s ease-in-out infinite;
+}
+.skeleton + .skeleton {
+  margin-top: 8px;
+}
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Inline query error + retry (Slice 14) ── */
+.query-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--status-exited) 40%, transparent);
+  border-radius: 8px;
+  background: var(--status-exited-bg);
+  padding: 9px 11px;
+  color: var(--status-exited);
+  font-size: 12px;
+}
+
+/* ── Linear link chips (Slice 2 / 9; display-only) ── */
+.linear-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 5px;
+  padding: 1px 5px;
+  background: color-mix(in srgb, #5e6ad2 22%, transparent);
+  color: color-mix(in srgb, #5e6ad2 70%, var(--fg1));
+  font: 600 10px/14px var(--font-code);
+  white-space: nowrap;
+}
+a.linear-chip:hover {
+  background: color-mix(in srgb, #5e6ad2 32%, transparent);
+}
+.linear-badge.offline {
   opacity: 0.55;
 }
 
-.shader-fallback {
-  background: var(--bg-shell);
-}
-
-.reduce-motion .shader,
+.reduce-motion .shader-canvas,
 .reduce-motion .attention-pip,
-.reduce-motion .status-needs-input {
-  animation: none;
+.reduce-motion .status-needs-input,
+.reduce-motion .needs-pill,
+.reduce-motion .skeleton,
+.reduce-motion.alert-rainbow {
+  /* !important so it always beats the .alert-rainbow token-cycle on <html>. */
+  animation: none !important;
 }
 
 @keyframes shell-pulse {
@@ -1030,18 +1222,281 @@ textarea.field {
 
 @media (prefers-reduced-motion: reduce) {
   :root {
+    /* Thin the glass blur, and lift glass opacity so surfaces still read
+       without the heavy backdrop blur (reference colors_and_type.css). */
     --blur-glass: var(--blur-glass-reduced);
+    --bg-glass: rgb(255 255 255 / 0.86);
   }
 
-  .shader,
+  .dark {
+    --bg-glass: rgb(20 20 22 / 0.85);
+  }
+
+  .shader-canvas,
   .attention-pip,
-  .status-needs-input {
-    animation: none;
+  .status-needs-input,
+  .needs-pill,
+  .skeleton,
+  :root.alert-rainbow {
+    animation: none !important;
   }
 }
 
+/* ── Topbar search button (#5/#9): the ⌘K hint floats right via the flex-1 label. ── */
+.topbar-search {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg3); /* fg4 fails AA on the translucent chip; fg3 clears 4.5:1 */
+  transition: background var(--dur-hover), color var(--dur-hover);
+}
+.topbar-search:hover {
+  color: var(--fg2);
+  background: rgb(0 0 0 / 0.24);
+}
+.topbar-search .kbd {
+  margin-left: 4px;
+}
+
+/* ── Linear connect button in the topbar ── */
+.linear-badge {
+  border: 0;
+  cursor: pointer;
+  transition: background var(--dur-hover), color var(--dur-hover), opacity var(--dur-hover);
+}
+.linear-badge:hover {
+  background: rgb(255 255 255 / 0.1);
+  color: var(--fg1);
+}
+.linear-badge.online {
+  color: var(--fg2);
+  opacity: 1;
+}
+.linear-glyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: #8b95f2;
+}
+
+/* ── Sidebar header (title + add) ── */
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 12px 6px;
+}
+
+/* ── Project row that hosts a hover-revealed actions menu (#7) ── */
+.project-row-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.project-row--menu {
+  padding-right: 4px;
+}
+.row-menu-trigger {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg4);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-hover), background var(--dur-hover), color var(--dur-hover);
+}
+.project-row:hover .row-menu-trigger,
+.row-menu-trigger:focus-visible,
+.row-menu-trigger[data-state="open"] {
+  opacity: 1;
+}
+.row-menu-trigger:hover {
+  /* Stronger than the row's own hover tint so the button lifts off the row. */
+  background: var(--bg-glass-strong);
+  color: var(--fg1);
+}
+/* Touch/pen has no hover, so reveal the action affordance there. */
+@media (pointer: coarse) {
+  .row-menu-trigger {
+    opacity: 1;
+  }
+}
+
+/* ── Radix dropdown-menu / popover surfaces ── */
+.menu-content,
+.popover-content {
+  z-index: 60;
+  min-width: 184px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--bg-glass-strong);
+  box-shadow: var(--shadow-glass), 0 14px 44px -16px rgb(0 0 0 / 0.6);
+  backdrop-filter: var(--blur-glass);
+  padding: 5px;
+}
+.popover-content {
+  width: 264px;
+  padding: 10px;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 7px;
+  padding: 7px 9px;
+  color: var(--fg2);
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+.menu-item[data-highlighted] {
+  background: var(--bg-glass-hover);
+  color: var(--fg1);
+}
+.menu-separator {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--hairline);
+}
+
+/* ── Modal shell (Radix Dialog) ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgb(0 0 0 / 0.5);
+  backdrop-filter: blur(2px);
+}
+.modal-panel {
+  position: fixed;
+  z-index: 101;
+  left: 50%;
+  top: 12vh;
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 32px));
+  max-height: 76vh;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--bg-glass-strong);
+  box-shadow: var(--shadow-glass), 0 24px 70px -20px rgb(0 0 0 / 0.62);
+  backdrop-filter: var(--blur-glass);
+  outline: none;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.modal-title {
+  margin: 0;
+  color: var(--fg1);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* ── Global search palette (#5) ── */
+.search-palette {
+  width: min(620px, calc(100vw - 32px));
+  padding: 0;
+  overflow: hidden;
+}
+.search-palette-input {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.search-palette-input input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg1);
+  font-size: 15px;
+}
+.search-palette-results {
+  max-height: 52vh;
+  overflow-y: auto;
+  padding: 6px;
+}
+.search-hint {
+  padding: 18px 14px;
+  color: var(--fg4);
+  font-size: 13px;
+  text-align: center;
+}
+.search-result {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  padding: 8px 10px;
+  color: var(--fg2);
+  text-align: left;
+  cursor: pointer;
+}
+.search-result.active {
+  background: var(--bg-glass-hover);
+}
+.search-result-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--fg4);
+}
+.search-result-kind {
+  flex: none;
+  border-radius: 5px;
+  padding: 1px 6px;
+  background: rgb(255 255 255 / 0.06);
+  color: var(--fg4);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.search-result .enter-hint {
+  opacity: 0;
+}
+.search-result.active .enter-hint {
+  opacity: 0.7;
+}
+
+/* ── Linear connect / link dialogs (#3) ── */
+.linear-dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 14px;
+  overflow-y: auto;
+}
+.linear-key-field input {
+  font-family: var(--font-code);
+}
+
 @media (max-width: 980px) {
-  .topbar-search,
+  /* .topbar-search is already gated by Tailwind `hidden lg:flex` (1024px). */
   .linear-badge {
     display: none;
   }
