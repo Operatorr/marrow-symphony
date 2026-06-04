@@ -21,7 +21,7 @@ The frontend exposes **three first-class views** (not one primary view). See
 │  Sidebar: flat Project list + Group filter; collapsible (Cmd+B)            │
 │  Three first-class views (top-bar switch):                                 │
 │    - Board    Issues by State Type; scope: This Project | All (global)     │
-│    - Cockpit  fleet of live Sessions, grouped by Project, attention-lit    │
+│    - Sessions fleet of live Sessions, grouped by Project, attention-lit    │
 │    - Feed     SIGNATURE: one Needs-Input Session at a time, advance to next│
 │  Issue page (card -> detail), embedded terminals (xterm.js), Runner/forms  │
 └───────────────────────────────── Tauri IPC ────────────────────────────────┘
@@ -64,7 +64,7 @@ The frontend exposes **three first-class views** (not one primary view). See
 
 These fields emerged from the UI/IO spec and belong in the Store schema (none are slice-1-critical):
 
-- **Project** — `color` (per-Project identity used across Cockpit tiles, terminal frame, sidebar),
+- **Project** — `color` (per-Project identity used across Sessions tiles, terminal frame, sidebar),
   `git_backed` flag (gates git-only Workspace Strategies), default Runner, Group ref, Linear link.
 - **Session** — `status` enum (Running / Needs Input / Idle / Exited), `needs_input_since` timestamp
   (powers the Feed's oldest-waiting ordering), `muted` / manual-override flags, scrollback ref,

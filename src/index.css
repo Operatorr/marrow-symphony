@@ -709,6 +709,10 @@ textarea.field {
 }
 
 .issue-card.needs {
+  /* The Needs-Input card border is an intentional fixed multi-hue gradient
+     (Marrow's signature), deliberately independent of the alert treatment — it
+     does NOT follow amber/cyan/rainbow. Only the glow below uses the alert
+     token. Leave the gradient as-is unless you mean to retheme the card. */
   background:
     linear-gradient(var(--bg-working-elev), var(--bg-working-elev)) padding-box,
     linear-gradient(135deg, #da8c6b, #d930b1, #8844d8, #4e52f4, #87f3ff) border-box;
@@ -1085,6 +1089,26 @@ textarea.field {
 
 /* ── Alert-color treatments (Slice 13). Default is amber (the base tokens);
    .alert-cyan / .alert-rainbow are opt-in overrides applied to <html>. ── */
+
+/* Register the Needs-Input accent tokens as animatable colors (Houdini @property)
+   so .alert-rainbow can hue-cycle them globally. Webviews without @property keep
+   the static color declared on .alert-rainbow below (magenta, never orange). */
+@property --status-needs-input {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #f5a524;
+}
+@property --status-needs-input-glow {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(245 165 36 / 0.6);
+}
+@property --status-needs-input-bg {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(245 165 36 / 0.14);
+}
+
 .alert-cyan {
   --status-needs-input: #00a3c7;
   --status-needs-input-glow: rgb(0 163 199 / 0.44);
@@ -1105,28 +1129,20 @@ textarea.field {
   --status-needs-input-glow: rgb(232 121 249 / 0.55);
   --status-needs-input-bg: rgb(232 121 249 / 0.16);
 }
-/* The rainbow treatment hue-cycles the attention glows in addition to pulsing. */
-.alert-rainbow .attention-pip,
-.alert-rainbow .status-needs-input {
-  animation: shell-pulse 1.4s ease-in-out infinite, alert-rainbow-cycle 5s linear infinite;
+/* The rainbow treatment hue-cycles the Needs-Input accent token itself, so every
+   surface that reads --status-needs-input (attention pips, status dots, the
+   "needs input" pills, Issue-card / Session-tile accents, focus rings and glows)
+   cycles together — instead of only a couple of hand-listed elements. */
+.alert-rainbow {
+  animation: alert-rainbow-token 6s linear infinite;
 }
-.alert-rainbow .needs-pill {
-  animation: alert-rainbow-text 5s linear infinite;
-}
-
-@keyframes alert-rainbow-cycle {
-  0%   { background-color: #ff6b6b; box-shadow: 0 0 12px 1px rgb(255 107 107 / 0.6); }
-  25%  { background-color: #ffd23f; box-shadow: 0 0 12px 1px rgb(255 210 63 / 0.6); }
-  50%  { background-color: #6bf7a0; box-shadow: 0 0 12px 1px rgb(107 247 160 / 0.6); }
-  75%  { background-color: #4ea8ff; box-shadow: 0 0 12px 1px rgb(78 168 255 / 0.6); }
-  100% { background-color: #e879f9; box-shadow: 0 0 12px 1px rgb(232 121 249 / 0.6); }
-}
-@keyframes alert-rainbow-text {
-  0%   { color: #ff6b6b; }
-  25%  { color: #e0a800; }
-  50%  { color: #1aa86a; }
-  75%  { color: #4ea8ff; }
-  100% { color: #c026d3; }
+@keyframes alert-rainbow-token {
+  0%   { --status-needs-input: #ff6b6b; --status-needs-input-glow: rgb(255 107 107 / 0.55); --status-needs-input-bg: rgb(255 107 107 / 0.16); }
+  20%  { --status-needs-input: #ffd23f; --status-needs-input-glow: rgb(255 210 63 / 0.55); --status-needs-input-bg: rgb(255 210 63 / 0.16); }
+  40%  { --status-needs-input: #6bf7a0; --status-needs-input-glow: rgb(107 247 160 / 0.55); --status-needs-input-bg: rgb(107 247 160 / 0.16); }
+  60%  { --status-needs-input: #4ea8ff; --status-needs-input-glow: rgb(78 168 255 / 0.55); --status-needs-input-bg: rgb(78 168 255 / 0.16); }
+  80%  { --status-needs-input: #e879f9; --status-needs-input-glow: rgb(232 121 249 / 0.55); --status-needs-input-bg: rgb(232 121 249 / 0.16); }
+  100% { --status-needs-input: #ff6b6b; --status-needs-input-glow: rgb(255 107 107 / 0.55); --status-needs-input-bg: rgb(255 107 107 / 0.16); }
 }
 
 /* ── Skeleton loaders (Slice 14) ── */
@@ -1186,8 +1202,9 @@ a.linear-chip:hover {
 .reduce-motion .attention-pip,
 .reduce-motion .status-needs-input,
 .reduce-motion .needs-pill,
-.reduce-motion .skeleton {
-  /* !important so it always beats the two-class `.alert-rainbow .x` rules. */
+.reduce-motion .skeleton,
+.reduce-motion.alert-rainbow {
+  /* !important so it always beats the .alert-rainbow token-cycle on <html>. */
   animation: none !important;
 }
 
@@ -1219,13 +1236,267 @@ a.linear-chip:hover {
   .attention-pip,
   .status-needs-input,
   .needs-pill,
-  .skeleton {
+  .skeleton,
+  :root.alert-rainbow {
     animation: none !important;
   }
 }
 
+/* ── Topbar search button (#5/#9): the ⌘K hint floats right via the flex-1 label. ── */
+.topbar-search {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg3); /* fg4 fails AA on the translucent chip; fg3 clears 4.5:1 */
+  transition: background var(--dur-hover), color var(--dur-hover);
+}
+.topbar-search:hover {
+  color: var(--fg2);
+  background: rgb(0 0 0 / 0.24);
+}
+.topbar-search .kbd {
+  margin-left: 4px;
+}
+
+/* ── Linear connect button in the topbar ── */
+.linear-badge {
+  border: 0;
+  cursor: pointer;
+  transition: background var(--dur-hover), color var(--dur-hover), opacity var(--dur-hover);
+}
+.linear-badge:hover {
+  background: rgb(255 255 255 / 0.1);
+  color: var(--fg1);
+}
+.linear-badge.online {
+  color: var(--fg2);
+  opacity: 1;
+}
+.linear-glyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: #8b95f2;
+}
+
+/* ── Sidebar header (title + add) ── */
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 12px 6px;
+}
+
+/* ── Project row that hosts a hover-revealed actions menu (#7) ── */
+.project-row-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.project-row--menu {
+  padding-right: 4px;
+}
+.row-menu-trigger {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg4);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-hover), background var(--dur-hover), color var(--dur-hover);
+}
+.project-row:hover .row-menu-trigger,
+.row-menu-trigger:focus-visible,
+.row-menu-trigger[data-state="open"] {
+  opacity: 1;
+}
+.row-menu-trigger:hover {
+  /* Stronger than the row's own hover tint so the button lifts off the row. */
+  background: var(--bg-glass-strong);
+  color: var(--fg1);
+}
+/* Touch/pen has no hover, so reveal the action affordance there. */
+@media (pointer: coarse) {
+  .row-menu-trigger {
+    opacity: 1;
+  }
+}
+
+/* ── Radix dropdown-menu / popover surfaces ── */
+.menu-content,
+.popover-content {
+  z-index: 60;
+  min-width: 184px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--bg-glass-strong);
+  box-shadow: var(--shadow-glass), 0 14px 44px -16px rgb(0 0 0 / 0.6);
+  backdrop-filter: var(--blur-glass);
+  padding: 5px;
+}
+.popover-content {
+  width: 264px;
+  padding: 10px;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 7px;
+  padding: 7px 9px;
+  color: var(--fg2);
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+.menu-item[data-highlighted] {
+  background: var(--bg-glass-hover);
+  color: var(--fg1);
+}
+.menu-separator {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--hairline);
+}
+
+/* ── Modal shell (Radix Dialog) ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgb(0 0 0 / 0.5);
+  backdrop-filter: blur(2px);
+}
+.modal-panel {
+  position: fixed;
+  z-index: 101;
+  left: 50%;
+  top: 12vh;
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 32px));
+  max-height: 76vh;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--bg-glass-strong);
+  box-shadow: var(--shadow-glass), 0 24px 70px -20px rgb(0 0 0 / 0.62);
+  backdrop-filter: var(--blur-glass);
+  outline: none;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.modal-title {
+  margin: 0;
+  color: var(--fg1);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* ── Global search palette (#5) ── */
+.search-palette {
+  width: min(620px, calc(100vw - 32px));
+  padding: 0;
+  overflow: hidden;
+}
+.search-palette-input {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.search-palette-input input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg1);
+  font-size: 15px;
+}
+.search-palette-results {
+  max-height: 52vh;
+  overflow-y: auto;
+  padding: 6px;
+}
+.search-hint {
+  padding: 18px 14px;
+  color: var(--fg4);
+  font-size: 13px;
+  text-align: center;
+}
+.search-result {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  padding: 8px 10px;
+  color: var(--fg2);
+  text-align: left;
+  cursor: pointer;
+}
+.search-result.active {
+  background: var(--bg-glass-hover);
+}
+.search-result-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--fg4);
+}
+.search-result-kind {
+  flex: none;
+  border-radius: 5px;
+  padding: 1px 6px;
+  background: rgb(255 255 255 / 0.06);
+  color: var(--fg4);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.search-result .enter-hint {
+  opacity: 0;
+}
+.search-result.active .enter-hint {
+  opacity: 0.7;
+}
+
+/* ── Linear connect / link dialogs (#3) ── */
+.linear-dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 14px;
+  overflow-y: auto;
+}
+.linear-key-field input {
+  font-family: var(--font-code);
+}
+
 @media (max-width: 980px) {
-  .topbar-search,
+  /* .topbar-search is already gated by Tailwind `hidden lg:flex` (1024px). */
   .linear-badge {
     display: none;
   }

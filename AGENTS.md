@@ -8,8 +8,9 @@
 A **Tauri 2 (Rust) + React 19** desktop app, package-managed with **pnpm**, that runs interactive
 coding-agent CLIs against your work. You organize work into Projects and Issues, each Issue gets an
 isolated Workspace, and you drive an agent inside an embedded terminal Session. The UI has **three
-first-class views** — a **Board** (Issues by State Type), a **Cockpit** (the live-Session fleet), and
-a **Feed** (the signature surface: the next agent that needs you, one at a time). See
+first-class views** — a **Board** (Issues by State Type), a **Sessions** view (the live-Session
+fleet; formerly "Cockpit"), and a **Feed** (the signature surface: the next agent that needs you,
+one at a time). See
 `docs/design-docs/ui-io-spec.md`.
 
 ## Read these first
@@ -26,7 +27,7 @@ a **Feed** (the signature surface: the next agent that needs you, one at a time)
   views, Issue page, terminal frame, forms, attention model).
 - **`docs/exec-plans/active/`** — the current build plans. Start here to implement:
   [`0002-full-functional-ui.md`](docs/exec-plans/active/0002-full-functional-ui.md) is the active
-  slice (App Shell + Board + Cockpit + Feed + Issue page, wired to live data).
+  slice (App Shell + Board + Sessions + Feed + Issue page, wired to live data).
   [`0001-scaffold-and-first-slice.md`](docs/exec-plans/active/0001-scaffold-and-first-slice.md) is the
   done tracer-bullet slice (scaffold → create Project → Issue → embedded agent terminal).
 

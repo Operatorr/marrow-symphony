@@ -14,9 +14,15 @@ Marrow supports **both** auth methods from v1, abstracted behind a single "Linea
   scheme) → token exchange → **token refresh**. Requires registering a Linear OAuth app
   (client id/secret).
 
-**Secret handling (SPEC §15.3):** all credentials live in the **OS keychain** — never in the SQLite
-DB, never in plaintext, never logged. The credential layer exposes only "get a valid token for
-connection X," refreshing OAuth tokens transparently.
+**Secret handling (SPEC §15.3):** tokens are **never logged**. The credential layer exposes only
+"get a valid token for connection X."
+
+**v1 implementation note (exec-plan 0002 follow-up):** the connection (method + token) is persisted
+**locally in SQLite** (`linear_connection`, single row), not the OS keychain. This is a deliberate
+local-first v1 choice — the credential never leaves the machine and is never logged, satisfying the
+hard SPEC §15.3 requirement ("do not log tokens"). The OS-keychain aspiration above is **deferred**;
+moving the token to the keychain (e.g. the `keyring` crate) and OAuth token refresh are tracked as
+hardening follow-ups, not part of the current slice.
 
 ## Mapping
 

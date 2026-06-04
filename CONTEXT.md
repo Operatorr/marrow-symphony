@@ -3,7 +3,7 @@
 A desktop app for running interactive coding-agent CLIs against your work. You organize
 work as Projects and Issues, give each Issue an isolated Workspace, and drive a coding agent
 inside an embedded terminal Session — navigated through three first-class views: a Kanban **Board**,
-a live-Session **Cockpit**, and a signature attention **Feed**. Named for its ancestor, the
+a live-Session **Sessions** view, and a signature attention **Feed**. Named for its ancestor, the
 "Symphony" orchestration spec (see `SPEC.md` and `docs/adr/0001-*`), from which it deliberately
 diverges.
 

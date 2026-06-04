@@ -1,4 +1,5 @@
 mod hooks;
+mod linear;
 mod models;
 mod sessions;
 mod sidecar;
@@ -8,17 +9,6 @@ mod workspace;
 
 use state::AppState;
 use tauri::{Manager, WindowEvent};
-
-/// Tracer-bullet IPC probe: the frontend invokes this to prove the
-/// React → Tauri → Rust round trip works end to end (Step 0 of the
-/// scaffold slice). Returns a value the UI can render verbatim.
-#[tauri::command]
-fn ping() -> String {
-    format!(
-        "pong from Rust — Marrow Symphony backend v{}",
-        env!("CARGO_PKG_VERSION")
-    )
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -52,7 +42,6 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            ping,
             store::create_project,
             store::list_projects,
             store::list_groups,
@@ -83,17 +72,16 @@ pub fn run() {
             hooks::claude_hook_status,
             hooks::install_claude_hook,
             hooks::uninstall_claude_hook,
+            linear::linear_status,
+            linear::linear_connect_api_key,
+            linear::linear_authorize_url,
+            linear::linear_complete_oauth,
+            linear::linear_disconnect,
+            linear::linear_list_projects,
+            linear::linear_link_project,
+            linear::linear_unlink_project,
+            linear::linear_import_issues,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ping;
-
-    #[test]
-    fn ping_smoke_returns_backend_value() {
-        assert!(ping().contains("pong from Rust"));
-    }
 }

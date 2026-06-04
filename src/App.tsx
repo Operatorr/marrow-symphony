@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type RefObject,
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -20,18 +19,29 @@ import {
   ChevronUp,
   Clock,
   Code2,
+  CornerDownLeft,
+  ExternalLink,
   FolderGit2,
   FolderPlus,
   Gauge,
   GitBranch,
+  Globe,
   Inbox,
+  KeyRound,
   Layers3,
+  Link2,
+  LoaderCircle,
   Maximize2,
   MessageSquare,
   Moon,
+  MoreVertical,
   PanelLeft,
   Palette,
+  Pencil,
+  Pin,
+  PinOff,
   Play,
+  Plug,
   Plus,
   RefreshCw,
   Search,
@@ -40,8 +50,10 @@ import {
   Sparkles,
   Square,
   Sun,
+  Unlink,
   X,
 } from "lucide-react";
+import { Dialog, DropdownMenu, Popover } from "radix-ui";
 import {
   claudeHookStatus,
   createIssue,
@@ -53,6 +65,15 @@ import {
   installClaudeHook,
   isTauriRuntime,
   killSession,
+  linearAuthorizeUrl,
+  linearCompleteOauth,
+  linearConnectApiKey,
+  linearDisconnect,
+  linearImportIssues,
+  linearLinkProject,
+  linearListProjects,
+  linearStatus,
+  linearUnlinkProject,
   listBoardColumns,
   listGroups,
   listIssueComments,
@@ -60,8 +81,8 @@ import {
   listProjects,
   listRunners,
   listSessions,
+  openExternal,
   openProjectDirectory,
-  ping,
   setSessionStatus,
   snoozeSession,
   startSession,
@@ -81,6 +102,7 @@ import type {
   BoardColumn,
   Group,
   Issue,
+  LinearConnection,
   Project,
   Runner,
   SessionStatusEvent,
@@ -92,7 +114,7 @@ import type {
 
 const viewLabels: Record<ViewMode, string> = {
   board: "Board",
-  cockpit: "Cockpit",
+  sessions: "Sessions",
   feed: "Feed",
 };
 
@@ -127,11 +149,11 @@ function App() {
     focusSession,
     setView,
   } = useUiStore();
-  const [projectSearch, setProjectSearch] = useState("");
   const [runnerPanelOpen, setRunnerPanelOpen] = useState(false);
-  const searchRef = useRef<HTMLInputElement | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [linearDialogOpen, setLinearDialogOpen] = useState(false);
+  const [linkLinearProjectId, setLinkLinearProjectId] = useState<number | null>(null);
 
-  const pingQuery = useQuery({ queryKey: ["ping"], queryFn: ping });
   const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: listProjects });
   const groupsQuery = useQuery({ queryKey: ["groups"], queryFn: listGroups });
   const issuesQuery = useQuery({
@@ -155,6 +177,7 @@ function App() {
     enabled: boardScope === "project" && selectedProjectId !== null,
   });
   const runnersQuery = useQuery({ queryKey: ["runners"], queryFn: listRunners });
+  const linearStatusQuery = useQuery({ queryKey: ["linear-status"], queryFn: linearStatus });
 
   useEffect(() => {
     if (!isTauriRuntime()) return undefined;
@@ -174,9 +197,12 @@ function App() {
         event.preventDefault();
         toggleSidebar();
       }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        (event.key.toLowerCase() === "f" || event.key.toLowerCase() === "k")
+      ) {
         event.preventDefault();
-        searchRef.current?.focus();
+        setSearchOpen(true);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -220,8 +246,10 @@ function App() {
         sidebarOpen={sidebarOpen}
         view={view}
         needsCount={activeNeeds.length}
-        pingText={pingQuery.data ?? (pingQuery.isError ? "ping failed" : "pinging")}
+        linearConnection={linearStatusQuery.data ?? null}
         runnerPanelOpen={runnerPanelOpen}
+        onOpenSearch={() => setSearchOpen(true)}
+        onOpenLinear={() => setLinearDialogOpen(true)}
         onToggleDark={toggleDark}
         onToggleReduceMotion={toggleReduceMotion}
         onCycleAlert={cycleAlertTreatment}
@@ -230,10 +258,7 @@ function App() {
           setView(nextView);
           if (nextView !== "board") openIssue(null);
         }}
-        onRefresh={() => {
-          void pingQuery.refetch();
-          invalidateWork();
-        }}
+        onRefresh={invalidateWork}
         onToggleRunnerPanel={() => setRunnerPanelOpen((value) => !value)}
       />
 
@@ -243,12 +268,10 @@ function App() {
             projects={projects}
             groups={groups}
             selectedProjectId={selectedProjectId}
-            search={projectSearch}
             stats={projectStats}
             loading={projectsQuery.isPending}
             error={projectsQuery.isError ? projectsQuery.error : null}
-            searchRef={searchRef}
-            onSearch={setProjectSearch}
+            linearConnected={Boolean(linearStatusQuery.data?.connected)}
             onRetry={() => void projectsQuery.refetch()}
             onSelectProject={(projectId) => {
               selectProject(projectId);
@@ -259,6 +282,8 @@ function App() {
               setView("board");
               invalidateWork();
             }}
+            onProjectChanged={invalidateWork}
+            onLinkLinear={(projectId) => setLinkLinearProjectId(projectId)}
           />
         )}
 
@@ -329,8 +354,8 @@ function App() {
             />
           )}
 
-          {view === "cockpit" && (
-            <CockpitView
+          {view === "sessions" && (
+            <SessionsView
               sessions={scopedSessions}
               focusedSessionId={focusedSessionId}
               loading={allSessionsQuery.isPending}
@@ -353,15 +378,54 @@ function App() {
               dark={dark}
               focusedSessionId={focusedSessionId}
               onFocusSession={focusSession}
-              onOpenCockpit={(sessionId) => {
+              onOpenSessions={(sessionId) => {
                 focusSession(sessionId);
-                setView("cockpit");
+                setView("sessions");
               }}
               onChanged={invalidateWork}
             />
           )}
         </main>
       </div>
+
+      {searchOpen && (
+        <GlobalSearch
+          projects={projects}
+          issues={allIssues}
+          onClose={() => setSearchOpen(false)}
+          onPickProject={(projectId) => {
+            selectProject(projectId);
+            setView("board");
+            setSearchOpen(false);
+          }}
+          onPickIssue={(issueId) => {
+            openIssue(issueId);
+            setView("board");
+            setSearchOpen(false);
+          }}
+        />
+      )}
+
+      <LinearConnectDialog
+        open={linearDialogOpen}
+        connection={linearStatusQuery.data ?? null}
+        onOpenChange={setLinearDialogOpen}
+        onChanged={() => {
+          void queryClient.invalidateQueries({ queryKey: ["linear-status"] });
+          invalidateWork();
+        }}
+      />
+
+      <LinearLinkDialog
+        project={projects.find((project) => project.id === linkLinearProjectId) ?? null}
+        connected={Boolean(linearStatusQuery.data?.connected)}
+        onClose={() => setLinkLinearProjectId(null)}
+        onConnect={() => {
+          setLinkLinearProjectId(null);
+          setLinearDialogOpen(true);
+        }}
+        onChanged={invalidateWork}
+      />
     </div>
   );
 }
@@ -373,8 +437,10 @@ function TopBar({
   sidebarOpen,
   view,
   needsCount,
-  pingText,
+  linearConnection,
   runnerPanelOpen,
+  onOpenSearch,
+  onOpenLinear,
   onToggleDark,
   onToggleReduceMotion,
   onCycleAlert,
@@ -389,8 +455,10 @@ function TopBar({
   sidebarOpen: boolean;
   view: ViewMode;
   needsCount: number;
-  pingText: string;
+  linearConnection: LinearConnection | null;
   runnerPanelOpen: boolean;
+  onOpenSearch: () => void;
+  onOpenLinear: () => void;
   onToggleDark: () => void;
   onToggleReduceMotion: () => void;
   onCycleAlert: () => void;
@@ -399,6 +467,7 @@ function TopBar({
   onRefresh: () => void;
   onToggleRunnerPanel: () => void;
 }) {
+  const linearConnected = Boolean(linearConnection?.connected);
   return (
     <header className="topbar">
       <div className="topbar-cluster min-w-0 flex-1">
@@ -419,11 +488,12 @@ function TopBar({
         </div>
       </div>
 
-      <div className="view-switch" role="tablist" aria-label="View">
+      <div className="view-switch" role="group" aria-label="View">
         {(Object.keys(viewLabels) as ViewMode[]).map((candidate) => (
           <button
             key={candidate}
             type="button"
+            aria-pressed={view === candidate}
             className={cn("view-switch-button", view === candidate && "active")}
             onClick={() => onSetView(candidate)}
           >
@@ -434,21 +504,30 @@ function TopBar({
       </div>
 
       <div className="topbar-cluster min-w-0 flex-1 justify-end">
+        <span className="sr-only" role="status" aria-live="polite">
+          {needsCount > 0 ? `${needsCount} sessions need input` : "No sessions need input"}
+        </span>
         {needsCount > 0 && (
           <span className="needs-pill">
             <AttentionPip />
             {needsCount} need input
           </span>
         )}
-        <div className="topbar-search hidden lg:flex">
-          <Search className="size-3.5" />
-          <span className="truncate">Search</span>
-          <Kbd>⌘F</Kbd>
-        </div>
-        <code className="hidden max-w-44 truncate font-mono text-[11px] text-[var(--fg4)] xl:block">
-          {pingText}
-        </code>
-        <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label="Refresh" title="Refresh">
+        <button
+          type="button"
+          className="topbar-search hidden lg:flex"
+          onClick={onOpenSearch}
+          aria-label="Search Issues, Projects, and prompts"
+          title="Search Issues, Projects, and prompts"
+        >
+          <Search className="size-3.5 shrink-0" />
+          <span className="flex-1 truncate text-left">Search</span>
+          <Kbd>⌘K</Kbd>
+        </button>
+        <Button variant="ghost" size="icon-sm" onClick={onOpenSearch} aria-label="Search" title="Search" className="lg:hidden">
+          <Search />
+        </Button>
+        <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label="Refresh data" title="Refresh data">
           <RefreshCw />
         </Button>
         <Button
@@ -464,7 +543,7 @@ function TopBar({
           variant="ghost"
           size="icon-sm"
           onClick={onCycleAlert}
-          aria-label="Cycle alert color"
+          aria-label={`Alert color: ${alertTreatment}. Click to cycle.`}
           title={`Alert color: ${alertTreatment} (click to cycle)`}
         >
           <Palette />
@@ -488,13 +567,19 @@ function TopBar({
         >
           {dark ? <Sun /> : <Moon />}
         </Button>
-        <span
-          className="linear-badge offline"
-          title="Linear is not connected — links are display-only in this build"
+        <button
+          type="button"
+          className={cn("linear-badge", linearConnected ? "online" : "offline")}
+          onClick={onOpenLinear}
+          title={
+            linearConnected
+              ? `Linear connected${linearConnection?.workspaceName ? ` — ${linearConnection.workspaceName}` : ""} (click to manage)`
+              : "Connect Linear to link Projects and import Issues"
+          }
         >
-          <span className="status-dot status-exited" />
-          Linear
-        </span>
+          <span className={cn("status-dot", linearConnected ? "status-running" : "status-exited")} />
+          {linearConnected ? linearConnection?.workspaceName ?? "Linear" : "Connect Linear"}
+        </button>
       </div>
     </header>
   );
@@ -504,42 +589,63 @@ function Sidebar({
   projects,
   groups,
   selectedProjectId,
-  search,
   stats,
   loading,
   error,
-  searchRef,
-  onSearch,
+  linearConnected,
   onRetry,
   onSelectProject,
   onProjectCreated,
+  onProjectChanged,
+  onLinkLinear,
 }: {
   projects: Project[];
   groups: Group[];
   selectedProjectId: number | null;
-  search: string;
   stats: Map<number, { live: number; needs: number }>;
   loading: boolean;
   error: unknown;
-  searchRef: RefObject<HTMLInputElement | null>;
-  onSearch: (value: string) => void;
+  linearConnected: boolean;
   onRetry: () => void;
   onSelectProject: (projectId: number | null) => void;
   onProjectCreated: (project: Project) => void;
+  onProjectChanged: () => void;
+  onLinkLinear: (projectId: number) => void;
 }) {
-  const [collapsed, setCollapsed] = useState<Set<number | "ungrouped">>(new Set());
-  const trimmed = search.trim().toLowerCase();
-  const filtered = projects.filter(
-    (project) => trimmed.length === 0 || project.name.toLowerCase().includes(trimmed),
-  );
+  const [collapsed, setCollapsed] = useState<Set<number | "ungrouped" | "pinned">>(new Set());
+  const [pinned, setPinned] = useState<Set<number>>(() => loadPinnedProjects());
+  const [renamingId, setRenamingId] = useState<number | null>(null);
 
-  // Group projects into accordion buckets: each Group in order, then Ungrouped.
-  const buckets: Array<{ key: number | "ungrouped"; name: string; projects: Project[] }> = [];
+  const renameMutation = useMutation({
+    mutationFn: (vars: { projectId: number; name: string }) => updateProject(vars),
+    onSuccess: () => {
+      setRenamingId(null);
+      onProjectChanged();
+    },
+    onError: () => setRenamingId(null),
+  });
+
+  const togglePin = (projectId: number) =>
+    setPinned((current) => {
+      const next = new Set(current);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      savePinnedProjects(next);
+      return next;
+    });
+
+  // Pinned Projects float into a dedicated bucket at the top and are removed
+  // from their normal Group bucket so they appear exactly once.
+  const pinnedProjects = projects.filter((project) => pinned.has(project.id));
+  const rest = projects.filter((project) => !pinned.has(project.id));
+
+  const buckets: Array<{ key: number | "ungrouped" | "pinned"; name: string; projects: Project[] }> = [];
+  if (pinnedProjects.length > 0) buckets.push({ key: "pinned", name: "Pinned", projects: pinnedProjects });
   for (const group of groups) {
-    const groupProjects = filtered.filter((project) => project.groupId === group.id);
+    const groupProjects = rest.filter((project) => project.groupId === group.id);
     if (groupProjects.length > 0) buckets.push({ key: group.id, name: group.name, projects: groupProjects });
   }
-  const ungrouped = filtered.filter((project) => project.groupId === null);
+  const ungrouped = rest.filter((project) => project.groupId === null);
   if (ungrouped.length > 0) buckets.push({ key: "ungrouped", name: "Ungrouped", projects: ungrouped });
 
   const aggregate = (group: Project[]) =>
@@ -551,7 +657,7 @@ function Sidebar({
       { live: 0, needs: 0 },
     );
 
-  const toggleGroup = (key: number | "ungrouped") =>
+  const toggleGroup = (key: number | "ungrouped" | "pinned") =>
     setCollapsed((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
@@ -561,17 +667,9 @@ function Sidebar({
 
   return (
     <aside className="sidebar">
-      <div className="space-y-3 p-3">
-        <label className="search-field">
-          <Search className="size-3.5" />
-          <input
-            ref={searchRef}
-            value={search}
-            onChange={(event) => onSearch(event.target.value)}
-            placeholder="Search Projects"
-          />
-        </label>
-        <AddProjectForm groups={groups} onCreated={onProjectCreated} />
+      <div className="sidebar-head">
+        <div className="label-caps">Projects</div>
+        <AddProjectMenu groups={groups} onCreated={onProjectCreated} />
       </div>
 
       <div className="sidebar-list">
@@ -597,7 +695,7 @@ function Sidebar({
             <SkeletonRows rows={4} h={46} />
           </div>
         ) : buckets.length === 0 ? (
-          <div className="empty-panel mx-1 my-2">No Projects</div>
+          <div className="empty-panel mx-1 my-2">No Projects yet — add one with +.</div>
         ) : (
           buckets.map((bucket) => {
             const isCollapsed = collapsed.has(bucket.key);
@@ -611,6 +709,7 @@ function Sidebar({
                 >
                   <span className="flex min-w-0 items-center gap-1">
                     {isCollapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+                    {bucket.key === "pinned" && <Pin className="size-3 text-[var(--fg4)]" />}
                     <span className="truncate">{bucket.name}</span>
                   </span>
                   <span className="flex items-center gap-1.5">
@@ -619,46 +718,196 @@ function Sidebar({
                   </span>
                 </button>
                 {!isCollapsed &&
-                  bucket.projects.map((project) => {
-                    const selected = selectedProjectId === project.id;
-                    const counts = stats.get(project.id) ?? { live: 0, needs: 0 };
-                    return (
-                      <button
-                        key={project.id}
-                        type="button"
-                        onClick={() => onSelectProject(project.id)}
-                        className={cn(
-                          "project-row",
-                          selected && "selected",
-                          counts.needs > 0 && "attention",
-                        )}
-                      >
-                        <ProjectChip project={project} />
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-1.5">
-                            <span className="block truncate font-medium">{project.name}</span>
-                            <LinearChip linearKey={project.linearKey} linearUrl={project.linearUrl} />
-                          </span>
-                          <span className="block truncate text-[11px] text-[var(--fg4)]">
-                            {project.gitBacked ? "git" : "non-git"}
-                          </span>
-                        </span>
-                        <span className="flex items-center gap-1">
-                          {!project.gitBacked && (
-                            <AlertCircle className="size-3.5 text-[var(--status-exited)]" />
-                          )}
-                          {counts.live > 0 && <span className="count-pill">{counts.live}</span>}
-                          {counts.needs > 0 && <AttentionPip />}
-                        </span>
-                      </button>
-                    );
-                  })}
+                  bucket.projects.map((project) => (
+                    <ProjectRow
+                      key={project.id}
+                      project={project}
+                      selected={selectedProjectId === project.id}
+                      counts={stats.get(project.id) ?? { live: 0, needs: 0 }}
+                      pinned={pinned.has(project.id)}
+                      renaming={renamingId === project.id}
+                      linearConnected={linearConnected}
+                      onSelect={() => onSelectProject(project.id)}
+                      onTogglePin={() => togglePin(project.id)}
+                      onStartRename={() => setRenamingId(project.id)}
+                      onCommitRename={(name) => renameMutation.mutate({ projectId: project.id, name })}
+                      onCancelRename={() => setRenamingId(null)}
+                      onLinkLinear={() => onLinkLinear(project.id)}
+                    />
+                  ))}
               </section>
             );
           })
         )}
       </div>
     </aside>
+  );
+}
+
+function ProjectRow({
+  project,
+  selected,
+  counts,
+  pinned,
+  renaming,
+  linearConnected,
+  onSelect,
+  onTogglePin,
+  onStartRename,
+  onCommitRename,
+  onCancelRename,
+  onLinkLinear,
+}: {
+  project: Project;
+  selected: boolean;
+  counts: { live: number; needs: number };
+  pinned: boolean;
+  renaming: boolean;
+  linearConnected: boolean;
+  onSelect: () => void;
+  onTogglePin: () => void;
+  onStartRename: () => void;
+  onCommitRename: (name: string) => void;
+  onCancelRename: () => void;
+  onLinkLinear: () => void;
+}) {
+  if (renaming) {
+    return (
+      <div className={cn("project-row project-row--menu", selected && "selected")}>
+        <ProjectChip project={project} />
+        <RenameInput initial={project.name} onCommit={onCommitRename} onCancel={onCancelRename} />
+      </div>
+    );
+  }
+  return (
+    <div
+      className={cn(
+        "project-row project-row--menu",
+        selected && "selected",
+        counts.needs > 0 && "attention",
+      )}
+    >
+      <button type="button" className="project-row-main" onClick={onSelect}>
+        <ProjectChip project={project} />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5">
+            <span className="block truncate font-medium">{project.name}</span>
+            {pinned && <Pin className="size-3 shrink-0 text-[var(--fg4)]" />}
+            <LinearChip linearKey={project.linearKey} linearUrl={project.linearUrl} />
+          </span>
+          <span className="block truncate text-[11px] text-[var(--fg4)]">
+            {project.gitBacked ? "git" : "non-git"}
+          </span>
+        </span>
+        <span className="flex items-center gap-1">
+          {!project.gitBacked && <AlertCircle className="size-3.5 text-[var(--status-exited)]" />}
+          {counts.live > 0 && <span className="count-pill">{counts.live}</span>}
+          {counts.needs > 0 && <AttentionPip />}
+        </span>
+      </button>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <button type="button" className="row-menu-trigger" aria-label={`Actions for ${project.name}`}>
+            <MoreVertical className="size-3.5" />
+          </button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content className="menu-content" align="end" sideOffset={4}>
+            <DropdownMenu.Item className="menu-item" onSelect={onTogglePin}>
+              {pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+              {pinned ? "Unpin" : "Pin"}
+            </DropdownMenu.Item>
+            <DropdownMenu.Item className="menu-item" onSelect={onStartRename}>
+              <Pencil className="size-3.5" />
+              Rename
+            </DropdownMenu.Item>
+            <DropdownMenu.Separator className="menu-separator" />
+            {project.linearUrl && (
+              <DropdownMenu.Item
+                className="menu-item"
+                onSelect={() => void openExternal(project.linearUrl as string)}
+              >
+                <ExternalLink className="size-3.5" />
+                Open in Linear
+              </DropdownMenu.Item>
+            )}
+            <DropdownMenu.Item className="menu-item" onSelect={onLinkLinear}>
+              <Link2 className="size-3.5" />
+              {project.linearKey
+                ? "Manage Linear link…"
+                : linearConnected
+                  ? "Link to Linear…"
+                  : "Connect Linear…"}
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+    </div>
+  );
+}
+
+/** Inline single-field rename for a Project row. Commits on Enter/blur, cancels on Escape. */
+function RenameInput({
+  initial,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  onCommit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const done = useRef(false);
+  const finish = (raw: string) => {
+    if (done.current) return;
+    done.current = true;
+    const next = raw.trim();
+    if (next && next !== initial) onCommit(next);
+    else onCancel();
+  };
+  return (
+    <input
+      className="field h-7 flex-1 text-[13px]"
+      defaultValue={initial}
+      autoFocus
+      aria-label="Rename Project"
+      onFocus={(event) => event.currentTarget.select()}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          finish(event.currentTarget.value);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          done.current = true;
+          onCancel();
+        }
+      }}
+      onBlur={(event) => finish(event.currentTarget.value)}
+    />
+  );
+}
+
+/** The `+` button in the sidebar header; opens the Add-Project form in a popover. */
+function AddProjectMenu({ groups, onCreated }: { groups: Group[]; onCreated: (project: Project) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <Button variant="ghost" size="icon-sm" aria-label="Add Project" title="Add Project">
+          <Plus />
+        </Button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content className="popover-content" align="end" sideOffset={6}>
+          <AddProjectForm
+            groups={groups}
+            onCreated={(project) => {
+              setOpen(false);
+              onCreated(project);
+            }}
+          />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
@@ -697,7 +946,7 @@ function AddProjectForm({
   };
 
   return (
-    <div className="tool-panel space-y-2">
+    <div className="space-y-2">
       <div className="label-caps">Add Project</div>
       <select
         value={groupId}
@@ -727,6 +976,7 @@ function AddProjectForm({
           onChange={(event) => setGroupName(event.target.value)}
           placeholder="Group name"
           className="field"
+          aria-label="New Group name"
         />
       )}
       <Button type="button" className="w-full" onClick={() => void browse()} disabled={mutation.isPending}>
@@ -802,9 +1052,10 @@ function BoardView({
           <h2>{scope === "project" ? selectedProject?.name ?? "This Project" : "All Projects"}</h2>
           <p>{scope === "project" ? selectedProject?.path ?? "Select a Project" : "Global State Type board"}</p>
         </div>
-        <div className="segmented">
+        <div className="segmented" role="group" aria-label="Board scope">
           <button
             type="button"
+            aria-pressed={scope === "project"}
             className={cn(scope === "project" && "active")}
             onClick={() => onScopeChange("project")}
             disabled={!selectedProject}
@@ -813,6 +1064,7 @@ function BoardView({
           </button>
           <button
             type="button"
+            aria-pressed={scope === "global"}
             className={cn(scope === "global" && "active")}
             onClick={() => onScopeChange("global")}
           >
@@ -1022,7 +1274,7 @@ function SessionPreview({ session }: { session: SessionSummary }) {
   return <pre className="tile-preview">{text || "…"}</pre>;
 }
 
-function CockpitView({
+function SessionsView({
   sessions,
   focusedSessionId,
   loading,
@@ -1075,8 +1327,8 @@ function CockpitView({
     <section className="view-surface">
       <div className="surface-header">
         <div>
-          <div className="label-caps">Cockpit</div>
-          <h2>Session fleet</h2>
+          <div className="label-caps">Sessions</div>
+          <h2>Sessions</h2>
           <p>{liveSessions.length} live Sessions</p>
         </div>
         <select
@@ -1221,7 +1473,7 @@ function FeedView({
   dark,
   focusedSessionId,
   onFocusSession,
-  onOpenCockpit,
+  onOpenSessions,
   onChanged,
 }: {
   sessions: SessionSummary[];
@@ -1230,7 +1482,7 @@ function FeedView({
   dark: boolean;
   focusedSessionId: number | null;
   onFocusSession: (sessionId: number | null) => void;
-  onOpenCockpit: (sessionId: number) => void;
+  onOpenSessions: (sessionId: number) => void;
   onChanged: () => void;
 }) {
   const queue = sortSessions(sessions.filter(sessionNeedsInput));
@@ -1360,9 +1612,9 @@ function FeedView({
                 <Clock />
                 Snooze
               </Button>
-              <Button variant="outline" onClick={() => onOpenCockpit(session.id)}>
+              <Button variant="outline" onClick={() => onOpenSessions(session.id)}>
                 <Gauge />
-                Open in Cockpit
+                Open in Sessions
               </Button>
               <Button onClick={() => void setSessionStatus(session.id, "idle").then(advance)}>
                 <Check />
@@ -1993,6 +2245,561 @@ function ClaudeHookManager() {
   );
 }
 
+type SearchResult = {
+  kind: "project" | "issue";
+  id: number;
+  title: string;
+  subtitle: string;
+  snippet?: string;
+};
+
+/** Return a short window of `text` around the first match of `query`, ellipsized. */
+function matchSnippet(text: string, query: string): string | undefined {
+  if (!text) return undefined;
+  const idx = text.toLowerCase().indexOf(query);
+  if (idx === -1) return undefined;
+  const start = Math.max(0, idx - 24);
+  const end = Math.min(text.length, idx + query.length + 48);
+  return `${start > 0 ? "…" : ""}${text.slice(start, end).trim()}${end < text.length ? "…" : ""}`;
+}
+
+/**
+ * Global command-palette search (⌘K / ⌘F) over Projects and Issues — including
+ * the prompt/details text written into an Issue's description. Client-side over
+ * already-loaded data; selecting a result navigates to it.
+ */
+function GlobalSearch({
+  projects,
+  issues,
+  onClose,
+  onPickProject,
+  onPickIssue,
+}: {
+  projects: Project[];
+  issues: Issue[];
+  onClose: () => void;
+  onPickProject: (projectId: number) => void;
+  onPickIssue: (issueId: number) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const trimmed = query.trim().toLowerCase();
+
+  const results = useMemo<SearchResult[]>(() => {
+    if (!trimmed) return [];
+    const out: SearchResult[] = [];
+    for (const project of projects) {
+      if (`${project.name} ${project.path}`.toLowerCase().includes(trimmed)) {
+        out.push({ kind: "project", id: project.id, title: project.name, subtitle: project.path });
+      }
+    }
+    for (const issue of issues) {
+      if (`${issue.title} ${issue.description} ${issue.projectName}`.toLowerCase().includes(trimmed)) {
+        out.push({
+          kind: "issue",
+          id: issue.id,
+          title: issue.title,
+          subtitle: `${issue.projectName} · ${issue.stateType}`,
+          snippet: matchSnippet(issue.description, trimmed),
+        });
+      }
+    }
+    return out.slice(0, 40);
+  }, [trimmed, projects, issues]);
+
+  useEffect(() => {
+    setActive(0);
+  }, [trimmed]);
+
+  const choose = (result: SearchResult) => {
+    if (result.kind === "project") onPickProject(result.id);
+    else onPickIssue(result.id);
+  };
+  const optionId = (result: SearchResult) => `gsr-${result.kind}-${result.id}`;
+
+  return (
+    <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="modal-overlay" />
+        <Dialog.Content className="modal-panel search-palette" aria-describedby={undefined}>
+          <Dialog.Title className="sr-only">Search Issues, Projects, and prompts</Dialog.Title>
+          <div className="search-palette-input">
+            <Search className="size-4 shrink-0 text-[var(--fg4)]" />
+            <input
+              autoFocus
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search Issues, Projects, and prompts…"
+              role="combobox"
+              aria-expanded={results.length > 0}
+              aria-controls="global-search-results"
+              aria-activedescendant={results[active] ? optionId(results[active]) : undefined}
+              aria-label="Search Issues, Projects, and prompts"
+              onKeyDown={(event) => {
+                // Keep our nav keys from leaking to FeedView's window keydown
+                // listener (which is a native listener outside React's root).
+                if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter") {
+                  event.nativeEvent.stopPropagation();
+                }
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  if (results.length === 0) return;
+                  setActive((value) => Math.min(results.length - 1, value + 1));
+                } else if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  if (results.length === 0) return;
+                  setActive((value) => Math.max(0, value - 1));
+                } else if (event.key === "Enter" && !event.metaKey && !event.ctrlKey) {
+                  event.preventDefault();
+                  const result = results[active];
+                  if (result) choose(result);
+                }
+              }}
+            />
+            <Kbd>esc</Kbd>
+          </div>
+          <span className="sr-only" aria-live="polite">
+            {trimmed ? `${results.length} result${results.length === 1 ? "" : "s"}` : ""}
+          </span>
+          <div className="search-palette-results" id="global-search-results" role="listbox" aria-label="Search results">
+            {!trimmed ? (
+              <div className="search-hint">
+                Search across Issue titles, prompts &amp; details, and Project names.
+              </div>
+            ) : results.length === 0 ? (
+              <div className="search-hint">No matches for “{query.trim()}”.</div>
+            ) : (
+              results.map((result, index) => (
+                <button
+                  key={`${result.kind}-${result.id}`}
+                  id={optionId(result)}
+                  role="option"
+                  aria-selected={index === active}
+                  type="button"
+                  className={cn("search-result", index === active && "active")}
+                  onMouseEnter={() => setActive(index)}
+                  onClick={() => choose(result)}
+                >
+                  <span className="search-result-icon">
+                    {result.kind === "project" ? (
+                      <FolderGit2 className="size-4" />
+                    ) : (
+                      <Inbox className="size-4" />
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="truncate font-medium text-[var(--fg1)]">{result.title}</span>
+                      <span className="search-result-kind">{result.kind}</span>
+                    </span>
+                    <span className="block truncate text-[11px] text-[var(--fg4)]">{result.subtitle}</span>
+                    {result.snippet && (
+                      <span className="block truncate text-[11px] text-[var(--fg3)]">{result.snippet}</span>
+                    )}
+                  </span>
+                  <CornerDownLeft className="enter-hint size-3.5 shrink-0 text-[var(--fg4)]" />
+                </button>
+              ))
+            )}
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+// The fixed loopback redirect the user registers on their Linear OAuth app.
+// With no embedded server we read the `code` back by manual paste (see dialog).
+const LINEAR_OAUTH_REDIRECT = "http://localhost:3939/callback";
+
+/** Connect / manage the workspace-level Linear connection (API key or OAuth). */
+function LinearConnectDialog({
+  open,
+  connection,
+  onOpenChange,
+  onChanged,
+}: {
+  open: boolean;
+  connection: LinearConnection | null;
+  onOpenChange: (open: boolean) => void;
+  onChanged: () => void;
+}) {
+  const [method, setMethod] = useState<"api_key" | "oauth">("api_key");
+  const [apiKey, setApiKey] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const connected = Boolean(connection?.connected);
+
+  // Don't carry a failed attempt's error or half-typed secrets into the next open.
+  useEffect(() => {
+    if (!open) {
+      setApiKey("");
+      setClientSecret("");
+      setCode("");
+      setError(null);
+    }
+  }, [open]);
+
+  const connectApiKey = useMutation({
+    mutationFn: () => linearConnectApiKey(apiKey.trim()),
+    onSuccess: () => {
+      setApiKey("");
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => setError(String(err)),
+  });
+  const completeOauth = useMutation({
+    mutationFn: () =>
+      linearCompleteOauth({ clientId: clientId.trim(), clientSecret: clientSecret.trim(), code: code.trim() }),
+    onSuccess: () => {
+      setCode("");
+      setClientSecret("");
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => setError(String(err)),
+  });
+  const disconnect = useMutation({
+    mutationFn: linearDisconnect,
+    onSuccess: () => {
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => setError(String(err)),
+  });
+
+  const authorize = async () => {
+    setError(null);
+    try {
+      const url = await linearAuthorizeUrl({ clientId: clientId.trim() });
+      await openExternal(url);
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="modal-overlay" />
+        <Dialog.Content className="modal-panel linear-dialog" aria-describedby={undefined}>
+          <div className="modal-head">
+            <div className="flex items-center gap-2">
+              <LinearGlyph />
+              <Dialog.Title className="modal-title">Linear</Dialog.Title>
+              {connected && <span className="count-pill">connected</span>}
+            </div>
+            <Dialog.Close asChild>
+              <Button variant="ghost" size="icon-sm" aria-label="Close">
+                <X />
+              </Button>
+            </Dialog.Close>
+          </div>
+
+          {connected ? (
+            <div className="space-y-3">
+              <div className="context-row">
+                <Globe className="size-3.5" />
+                {connection?.workspaceName ?? "Linear workspace"}
+              </div>
+              <div className="text-[12px] text-[var(--fg3)]">
+                Connected via {connection?.method === "oauth" ? "OAuth" : "API key"}. Link a Project to a Linear
+                Project from its sidebar menu to import Issues.
+              </div>
+              {error && <div className="text-[12px] text-destructive">{error}</div>}
+              <Button variant="destructive" onClick={() => disconnect.mutate()} disabled={disconnect.isPending}>
+                <Unlink />
+                Disconnect
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="segmented w-full" role="group" aria-label="Connection method">
+                <button
+                  type="button"
+                  aria-pressed={method === "api_key"}
+                  className={cn("flex-1", method === "api_key" && "active")}
+                  onClick={() => setMethod("api_key")}
+                >
+                  API key
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={method === "oauth"}
+                  className={cn("flex-1", method === "oauth" && "active")}
+                  onClick={() => setMethod("oauth")}
+                >
+                  OAuth (browser)
+                </button>
+              </div>
+
+              {method === "api_key" ? (
+                <form
+                  className="space-y-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (apiKey.trim()) connectApiKey.mutate();
+                  }}
+                >
+                  <p className="text-[12px] text-[var(--fg3)]">
+                    Create a personal API key in Linear → Settings → Security &amp; access → Personal API keys, then
+                    paste it here. Stored locally on this machine only.
+                  </p>
+                  <label className="search-field linear-key-field">
+                    <KeyRound className="size-3.5" />
+                    <input
+                      type="password"
+                      value={apiKey}
+                      onChange={(event) => setApiKey(event.target.value)}
+                      placeholder="lin_api_…"
+                      aria-label="Linear API key"
+                    />
+                  </label>
+                  {error && <div className="text-[12px] text-destructive">{error}</div>}
+                  <Button type="submit" disabled={!apiKey.trim() || connectApiKey.isPending}>
+                    {connectApiKey.isPending ? <LoaderCircle className="animate-spin" /> : <Plug />}
+                    Connect
+                  </Button>
+                </form>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-[12px] text-[var(--fg3)]">
+                    Create an OAuth application in Linear → Settings → API → OAuth applications with redirect URI{" "}
+                    <code className="token-hint">{LINEAR_OAUTH_REDIRECT}</code>, then authorize below. After approving,
+                    copy the <code className="token-hint">code</code> value from the address bar and paste it back here.
+                  </p>
+                  <input
+                    value={clientId}
+                    onChange={(event) => setClientId(event.target.value)}
+                    placeholder="Client ID"
+                    className="field font-mono"
+                    aria-label="Linear OAuth client ID"
+                  />
+                  <Button variant="outline" onClick={() => void authorize()} disabled={!clientId.trim()}>
+                    <ExternalLink />
+                    Authorize in browser
+                  </Button>
+                  <input
+                    value={clientSecret}
+                    onChange={(event) => setClientSecret(event.target.value)}
+                    placeholder="Client secret"
+                    type="password"
+                    className="field font-mono"
+                    aria-label="Linear OAuth client secret"
+                  />
+                  <input
+                    value={code}
+                    onChange={(event) => setCode(event.target.value)}
+                    placeholder="Authorization code"
+                    className="field font-mono"
+                    aria-label="Linear authorization code"
+                  />
+                  {error && <div className="text-[12px] text-destructive">{error}</div>}
+                  <Button
+                    onClick={() => completeOauth.mutate()}
+                    disabled={!clientId.trim() || !clientSecret.trim() || !code.trim() || completeOauth.isPending}
+                  >
+                    {completeOauth.isPending ? <LoaderCircle className="animate-spin" /> : <Check />}
+                    Complete connection
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+/** Link a single Project to a Linear Project and import its Issues. */
+function LinearLinkDialog({
+  project,
+  connected,
+  onClose,
+  onConnect,
+  onChanged,
+}: {
+  project: Project | null;
+  connected: boolean;
+  onClose: () => void;
+  onConnect: () => void;
+  onChanged: () => void;
+}) {
+  const [selected, setSelected] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const [imported, setImported] = useState<number | null>(null);
+  const open = project !== null;
+
+  const projectsQuery = useQuery({
+    queryKey: ["linear-projects"],
+    queryFn: linearListProjects,
+    enabled: open && connected,
+  });
+  const linearProjects = projectsQuery.data ?? [];
+
+  useEffect(() => {
+    if (open) {
+      setSelected("");
+      setError(null);
+      setImported(null);
+    }
+  }, [open, project?.id]);
+
+  const linkAndImport = useMutation({
+    mutationFn: async () => {
+      if (!project) return { imported: 0 };
+      const chosen = linearProjects.find((candidate) => candidate.id === selected);
+      await linearLinkProject({
+        projectId: project.id,
+        linearProjectId: selected,
+        linearProjectName: chosen?.name ?? null,
+        linearKey: chosen?.teamKey ?? chosen?.name ?? null,
+        linearUrl: chosen?.url ?? null,
+      });
+      return linearImportIssues({ projectId: project.id });
+    },
+    onSuccess: (result) => {
+      setImported(result.imported);
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => setError(String(err)),
+  });
+  const reimport = useMutation({
+    mutationFn: () => linearImportIssues({ projectId: project?.id as number }),
+    onSuccess: (result) => {
+      setImported(result.imported);
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => setError(String(err)),
+  });
+  const unlink = useMutation({
+    mutationFn: () => linearUnlinkProject({ projectId: project?.id as number }),
+    onSuccess: () => {
+      setError(null);
+      setImported(null);
+      onChanged();
+    },
+    onError: (err) => setError(String(err)),
+  });
+
+  const alreadyLinked = Boolean(project?.linearKey || project?.linearUrl);
+
+  return (
+    <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="modal-overlay" />
+        <Dialog.Content className="modal-panel linear-dialog" aria-describedby={undefined}>
+          <div className="modal-head">
+            <div className="flex min-w-0 items-center gap-2">
+              <LinearGlyph />
+              <Dialog.Title className="modal-title truncate">
+                Linear · {project?.name ?? "Project"}
+              </Dialog.Title>
+            </div>
+            <Dialog.Close asChild>
+              <Button variant="ghost" size="icon-sm" aria-label="Close">
+                <X />
+              </Button>
+            </Dialog.Close>
+          </div>
+
+          {!connected ? (
+            <div className="space-y-3">
+              <p className="text-[12px] text-[var(--fg3)]">
+                Connect your Linear workspace first, then link this Project to a Linear Project and import its Issues.
+              </p>
+              <Button onClick={onConnect}>
+                <Plug />
+                Connect Linear
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {alreadyLinked && (
+                <div className="context-row">
+                  <Link2 className="size-3.5" />
+                  Linked to {project?.linearKey ?? project?.linearUrl}
+                </div>
+              )}
+              {projectsQuery.isError ? (
+                <QueryError
+                  error={projectsQuery.error}
+                  onRetry={() => void projectsQuery.refetch()}
+                  label="Couldn't load Linear Projects"
+                />
+              ) : projectsQuery.isPending ? (
+                <SkeletonRows rows={3} h={32} />
+              ) : (
+                <select
+                  value={selected}
+                  onChange={(event) => setSelected(event.target.value)}
+                  className="field"
+                  aria-label="Linear Project"
+                >
+                  <option value="">Select a Linear Project…</option>
+                  {linearProjects.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>
+                      {candidate.teamName ? `${candidate.teamName} · ` : ""}
+                      {candidate.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {imported !== null && (
+                <div className="text-[12px] text-[var(--status-running)]">
+                  Synced {imported} Issue(s) from Linear.
+                </div>
+              )}
+              {error && <div className="text-[12px] text-destructive">{error}</div>}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  onClick={() => linkAndImport.mutate()}
+                  disabled={!selected || linkAndImport.isPending}
+                >
+                  {linkAndImport.isPending ? <LoaderCircle className="animate-spin" /> : <Link2 />}
+                  Link &amp; import Issues
+                </Button>
+                {alreadyLinked && (
+                  <Button variant="outline" onClick={() => reimport.mutate()} disabled={reimport.isPending}>
+                    {reimport.isPending ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
+                    Re-import
+                  </Button>
+                )}
+                {alreadyLinked && (
+                  <Button variant="destructive" onClick={() => unlink.mutate()} disabled={unlink.isPending}>
+                    <Unlink />
+                    Unlink
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+/** Small Linear-style glyph for the connect dialogs. */
+function LinearGlyph() {
+  return (
+    <span className="linear-glyph" aria-hidden>
+      <svg viewBox="0 0 100 100" width="14" height="14">
+        <path
+          fill="currentColor"
+          d="M1.2 61.4a1 1 0 0 1 1.7-.5l36.2 36.2a1 1 0 0 1-.5 1.7C20.6 95.6 4.4 79.4 1.2 61.4Zm-.9-15.8a1 1 0 0 0 .3.8l53 53a1 1 0 0 0 .8.3 49.6 49.6 0 0 0 8.9-1.7 1 1 0 0 0 .4-1.7L3.7 36.3a1 1 0 0 0-1.7.4 49.6 49.6 0 0 0-1.7 8.9ZM6.7 26a1 1 0 0 0 .2 1.2l65.9 65.9a1 1 0 0 0 1.2.2 50.3 50.3 0 0 0 6.5-4.2 1 1 0 0 0 .1-1.5L12.4 19.3a1 1 0 0 0-1.5.1 50.3 50.3 0 0 0-4.2 6.5ZM21 12a1 1 0 0 0 0 1.4l65.6 65.6a1 1 0 0 0 1.4 0A50 50 0 0 0 21 12Z"
+        />
+      </svg>
+    </span>
+  );
+}
+
 function Logo() {
   return (
     <span className="logo-mark">
@@ -2207,6 +3014,28 @@ function saveCockpitOrder(order: number[]) {
     localStorage.setItem(COCKPIT_ORDER_KEY, JSON.stringify(order));
   } catch {
     // localStorage may be unavailable; ordering is a nicety, not load-bearing.
+  }
+}
+
+const PINNED_PROJECTS_KEY = "marrow:pinned-projects";
+
+function loadPinnedProjects(): Set<number> {
+  try {
+    const raw = localStorage.getItem(PINNED_PROJECTS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return new Set(
+      Array.isArray(parsed) ? parsed.filter((value): value is number => typeof value === "number") : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function savePinnedProjects(pinned: Set<number>) {
+  try {
+    localStorage.setItem(PINNED_PROJECTS_KEY, JSON.stringify([...pinned]));
+  } catch {
+    // localStorage may be unavailable; pinning is a nicety, not load-bearing.
   }
 }
 

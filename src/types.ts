@@ -127,4 +127,22 @@ export interface ClaudeHookStatus {
   command: string;
 }
 
-export type ViewMode = "board" | "cockpit" | "feed";
+export type ViewMode = "board" | "sessions" | "feed";
+
+export interface LinearConnection {
+  connected: boolean;
+  method: "api_key" | "oauth" | null;
+  workspaceName: string | null;
+}
+
+export interface LinearProject {
+  id: string;
+  name: string;
+  teamName: string | null;
+  teamKey: string | null;
+  url: string | null;
+}
+
+export interface LinearImportResult {
+  imported: number;
+}

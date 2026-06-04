@@ -75,7 +75,7 @@ export const useUiStore = create<UiState>((set) => ({
   boardScope: "global",
   openedIssueId: null,
   focusedSessionId: null,
-  view: "cockpit",
+  view: "sessions",
   toggleDark: () =>
     set((state) => {
       const dark = !state.dark;

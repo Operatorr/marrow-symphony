@@ -1,10 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type {
   BoardColumn,
   ClaudeHookStatus,
   Group,
   Issue,
   IssueComment,
+  LinearConnection,
+  LinearImportResult,
+  LinearProject,
   Project,
   Runner,
   SessionSummary,
@@ -25,11 +29,6 @@ export function isTauriRuntime() {
 
 function unavailable(action: string) {
   return Promise.reject(new Error(`${action} is available in the Tauri app.`));
-}
-
-export function ping() {
-  if (!isTauriRuntime()) return Promise.resolve("browser preview");
-  return invoke<string>("ping");
 }
 
 export function openProjectDirectory() {
@@ -283,4 +282,70 @@ export function installClaudeHook() {
 export function uninstallClaudeHook() {
   if (!isTauriRuntime()) return unavailable("Removing the Claude hook");
   return invoke<ClaudeHookStatus>("uninstall_claude_hook");
+}
+
+/** Open a URL in the user's default browser (Tauri opener plugin). */
+export function openExternal(url: string) {
+  if (!isTauriRuntime()) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return Promise.resolve();
+  }
+  return openUrl(url);
+}
+
+const DISCONNECTED: LinearConnection = { connected: false, method: null, workspaceName: null };
+
+export function linearStatus() {
+  if (!isTauriRuntime()) return Promise.resolve(DISCONNECTED);
+  return invoke<LinearConnection>("linear_status");
+}
+
+export function linearConnectApiKey(apiKey: string) {
+  if (!isTauriRuntime()) return unavailable("Connecting Linear");
+  return invoke<LinearConnection>("linear_connect_api_key", { input: { apiKey } });
+}
+
+export function linearAuthorizeUrl(input: { clientId: string }) {
+  if (!isTauriRuntime()) return unavailable("Linear OAuth");
+  return invoke<string>("linear_authorize_url", { input });
+}
+
+export function linearCompleteOauth(input: {
+  clientId: string;
+  clientSecret: string;
+  code: string;
+}) {
+  if (!isTauriRuntime()) return unavailable("Linear OAuth");
+  return invoke<LinearConnection>("linear_complete_oauth", { input });
+}
+
+export function linearDisconnect() {
+  if (!isTauriRuntime()) return unavailable("Disconnecting Linear");
+  return invoke<LinearConnection>("linear_disconnect");
+}
+
+export function linearListProjects() {
+  if (!isTauriRuntime()) return Promise.resolve([] as LinearProject[]);
+  return invoke<LinearProject[]>("linear_list_projects");
+}
+
+export function linearLinkProject(input: {
+  projectId: number;
+  linearProjectId: string;
+  linearProjectName: string | null;
+  linearKey: string | null;
+  linearUrl: string | null;
+}) {
+  if (!isTauriRuntime()) return unavailable("Linking a Linear Project");
+  return invoke<Project>("linear_link_project", { input });
+}
+
+export function linearUnlinkProject(input: { projectId: number }) {
+  if (!isTauriRuntime()) return unavailable("Unlinking a Linear Project");
+  return invoke<Project>("linear_unlink_project", { input });
+}
+
+export function linearImportIssues(input: { projectId: number }) {
+  if (!isTauriRuntime()) return unavailable("Importing Linear Issues");
+  return invoke<LinearImportResult>("linear_import_issues", { input });
 }
